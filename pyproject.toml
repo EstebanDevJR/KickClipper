@@ -1,0 +1,32 @@
+[project]
+name = "kickclipper"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "curl-cffi>=0.15.0",
+    "fastapi>=0.136.3",
+    "faster-whisper>=1.2.1",
+    "httpx>=0.28.1",
+    "mlx-whisper>=0.4.3",
+    "numpy>=2.4.6",
+    "pydantic-settings>=2.14.1",
+    "sse-starlette>=3.4.4",
+    "uvicorn[standard]>=0.49.0",
+    "yt-dlp>=2026.3.17",
+]
+
+[project.scripts]
+kickclipper = "kickclipper.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Con la instalación no-editable (ver run.sh), uv solo reconstruiría el paquete
+# al cambiar pyproject.toml; sin estas claves, los cambios en el código no
+# llegan al servidor aunque se reinicie.
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "kickclipper/**" }]
+
+[tool.hatch.build.targets.wheel]
+packages = ["kickclipper"]

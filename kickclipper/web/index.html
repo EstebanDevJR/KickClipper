@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KickClipper — Estudio de clips</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2300e701'/><text x='50' y='68' font-size='52' text-anchor='middle' font-family='Arial Black'>✂</text></svg>">
+</head>
+<body>
+<div class="noise"></div>
+
+<aside class="rack">
+  <div class="brand">
+    <div class="brand-mark">K<span>C</span></div>
+    <div class="brand-name">KICK<b>CLIPPER</b></div>
+    <div class="brand-sub">estudio local de clips</div>
+  </div>
+
+  <div class="rack-section">
+    <div class="rack-label">// stack local</div>
+    <div class="gear" id="gear-ffmpeg">
+      <span class="led"></span>
+      <div><b>FFmpeg</b><i>render 9:16 / 16:9</i></div>
+    </div>
+    <div class="gear" id="gear-whisper">
+      <span class="led"></span>
+      <div><b>Whisper</b><i id="whisper-detail">—</i></div>
+    </div>
+    <div class="gear" id="gear-ollama">
+      <span class="led"></span>
+      <div><b>Ollama</b><i id="ollama-detail">—</i></div>
+    </div>
+  </div>
+
+  <div class="rack-section">
+    <div class="rack-label">// formatos</div>
+    <div class="gear">
+      <span class="led on"></span>
+      <div><b>Short 9:16</b><i>15 s – 1 min · subtítulos karaoke</i></div>
+    </div>
+    <div class="gear">
+      <span class="led on"></span>
+      <div><b>Video 16:9</b><i>5 – 10 min · estilo YouTube</i></div>
+    </div>
+  </div>
+
+  <div class="rack-section">
+    <div class="rack-label">// pipeline</div>
+    <ol class="pipe-legend">
+      <li><em>01</em> Descarga del VOD</li>
+      <li><em>02</em> Transcripción IA</li>
+      <li><em>03</em> Análisis de hype</li>
+      <li><em>04</em> Puntuación LLM</li>
+      <li><em>05</em> Render final</li>
+    </ol>
+  </div>
+
+  <div class="rack-foot">
+    <span class="dot-live" id="sse-dot"></span><span id="sse-label">conectando…</span>
+  </div>
+</aside>
+
+<main class="stage">
+  <header class="masthead">
+    <h1>CORTA EL <span class="hl">MOMENTO</span></h1>
+    <p>Pega un VOD de Kick y la IA local encuentra y monta los clips.</p>
+  </header>
+
+  <form class="console" id="job-form" autocomplete="off">
+    <div class="console-row">
+      <span class="console-prompt">▶</span>
+      <input type="url" id="url-input" placeholder="https://kick.com/canal/videos/…" required spellcheck="false">
+      <button type="submit" class="btn-go" id="go-btn">CLIPEAR</button>
+    </div>
+    <div class="console-opts">
+      <label class="opt">
+        <span>Generar</span>
+        <select id="formats-input">
+          <option value="short" selected>shorts 9:16</option>
+          <option value="video">videos 16:9</option>
+          <option value="short,video">shorts + videos</option>
+        </select>
+      </label>
+      <label class="opt">
+        <span>Rango (opcional)</span>
+        <input type="text" id="sections-input" placeholder="00:10:00-00:40:00" pattern="^\d{1,2}:\d{2}(:\d{2})?-\d{1,2}:\d{2}(:\d{2})?$">
+      </label>
+      <label class="opt">
+        <span>Auto-render</span>
+        <select id="autorender-input">
+          <option value="0">ninguno</option>
+          <option value="3" selected>top 3</option>
+          <option value="5">top 5</option>
+          <option value="12">todos</option>
+        </select>
+      </label>
+      <span class="opt-hint" id="opt-hint">Cualquier canal de kick.com — usa solo contenido con permiso del creador.</span>
+    </div>
+  </form>
+
+  <section class="jobs" id="jobs">
+    <div class="empty" id="jobs-empty">
+      <div class="empty-glyph">⚡</div>
+      <p>Sin trabajos todavía.<br>Pega la URL de un VOD para empezar.</p>
+    </div>
+  </section>
+
+  <section class="clips-zone" id="clips-zone" hidden>
+    <div class="zone-head">
+      <h2 id="clips-title">CLIPS DETECTADOS</h2>
+      <span class="zone-count" id="clips-count"></span>
+    </div>
+    <div class="clip-grid" id="clip-grid"></div>
+  </section>
+</main>
+
+<!-- Modal de edición / preview -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-card">
+    <button class="modal-x" id="modal-close">✕</button>
+    <div class="modal-cols">
+      <div class="modal-player">
+        <video id="modal-video" controls playsinline></video>
+        <div class="player-placeholder" id="player-placeholder">
+          <span>SIN RENDER</span>
+          <p>Renderiza el clip para previsualizarlo</p>
+        </div>
+      </div>
+      <div class="modal-form">
+        <label>Título del clip
+          <input type="text" id="m-title" maxlength="90">
+        </label>
+        <div class="row2">
+          <label>Inicio (s)
+            <input type="number" id="m-start" step="0.5" min="0">
+          </label>
+          <label>Fin (s)
+            <input type="number" id="m-end" step="0.5" min="0">
+          </label>
+        </div>
+        <div class="row2">
+          <label>Tipo
+            <select id="m-format">
+              <option value="short">Short 9:16 (máx 1 min)</option>
+              <option value="video">Video 16:9 (5-10 min)</option>
+            </select>
+          </label>
+          <label>Estilo (short)
+            <select id="m-layout">
+              <option value="blur">Fondo difuminado</option>
+              <option value="crop">Recorte central</option>
+            </select>
+          </label>
+        </div>
+        <label class="check-line">
+          <input type="checkbox" id="m-subs" checked> Subtítulos
+        </label>
+        <label class="check-line">
+          <input type="checkbox" id="m-showtitle" checked> Mostrar rótulo de título
+        </label>
+        <div class="m-publish">
+          <div class="m-publish-head">
+            <span>PARA PUBLICAR</span>
+            <button type="button" id="m-copy-title">⧉ copiar título</button>
+            <button type="button" id="m-copy-desc">⧉ copiar descripción</button>
+          </div>
+          <textarea id="m-desc" rows="8" spellcheck="false"
+                    placeholder="Descripción recomendada (incluye redes y hashtags)"></textarea>
+        </div>
+        <div class="m-meta">
+          <div class="m-reason" id="m-reason"></div>
+          <div class="m-tags" id="m-tags"></div>
+        </div>
+        <div class="m-progress" id="m-progress" hidden>
+          <div class="m-progress-bar" id="m-progress-bar"></div>
+          <span id="m-progress-label">Renderizando…</span>
+        </div>
+        <div class="m-actions">
+          <button class="btn-render" id="m-render">⟳ RENDERIZAR</button>
+          <a class="btn-download" id="m-download" download hidden>⬇ DESCARGAR</a>
+        </div>
+        <div class="m-exported" id="m-exported" hidden></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
