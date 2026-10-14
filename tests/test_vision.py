@@ -97,3 +97,13 @@ def test_real_facecam_detection(tmp_path, ffmpeg, face_image):
     assert p["layout"] == "split"
     x, y, w, h = p["cam"]
     assert x + w > 0.8 and y + h > 0.7  # esquina inferior derecha
+
+
+def test_split_from_manual_rect_keeps_panel_aspect():
+    p = vision.split_from_rect([0.05, 0.6, 0.2, 0.3], 1920, 1080)
+    assert p["layout"] == "split" and p["manual"]
+    x, y, w, h = p["cam"]
+    panel = 1080 / round(1920 * vision.CAM_FRACTION)
+    assert abs((w * 1920) / (h * 1080) - panel) < 0.02
+    # contiene lo que marcó el usuario
+    assert x <= 0.05 + 1e-6 and x + w >= 0.25 - 1e-6 and 0 <= y and y + h <= 1.0001

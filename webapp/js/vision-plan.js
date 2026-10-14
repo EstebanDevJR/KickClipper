@@ -61,6 +61,22 @@ export function splitPlan(cam, srcW, srcH) {
   return { layout: "split", cam: camRect, game: [r4((1 - gw) / 2), 0, r4(gw), 1], cam_fraction: camH / OUT_H, caption_y: camH / OUT_H };
 }
 
+/** Layout split con la cámara marcada a mano (ampliada al aspecto del panel). */
+export function splitFromRect(camRect, srcW, srcH) {
+  const camH = Math.round((OUT_H * CAM_FRACTION) / 2) * 2;
+  const aspect = OUT_W / camH;
+  let [x, y, w, h] = camRect.map(Number);
+  w = Math.max(w, 0.02); h = Math.max(h, 0.02);
+  const cx = x + w / 2, cy = y + h / 2;
+  if ((w * srcW) / (h * srcH) < aspect) w = (h * srcH * aspect) / srcW;
+  else h = (w * srcW) / (aspect * srcH);
+  if (w > 1) { w = 1; h = srcW / (aspect * srcH); }
+  if (h > 1) { h = 1; w = (srcH * aspect) / srcW; }
+  const rect = [r4(clamp(cx - w / 2, 0, 1 - w)), r4(clamp(cy - h / 2, 0, 1 - h)), r4(w), r4(h)];
+  const gw = Math.min(1, (srcH * (OUT_W / (OUT_H - camH))) / srcW);
+  return { layout: "split", cam: rect, game: [r4((1 - gw) / 2), 0, r4(gw), 1], cam_fraction: camH / OUT_H, caption_y: camH / OUT_H, manual: true };
+}
+
 function followPlan(person, srcW, srcH) {
   const rect = rectAround(person.med, 4.2, VERTICAL_ASPECT, srcW, srcH, 0.42, 0.55);
   const keys = [];

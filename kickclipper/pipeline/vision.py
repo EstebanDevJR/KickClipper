@@ -284,6 +284,33 @@ def _split_plan(cam: dict, src_w: int, src_h: int) -> dict:
             "cam_fraction": cam_h / out_h, "caption_y": cam_h / out_h}
 
 
+def split_from_rect(cam_rect: list[float], src_w: int, src_h: int) -> dict:
+    """Layout split con la cámara marcada a mano (rectángulo normalizado).
+
+    El rectángulo se amplía lo justo para tener la relación de aspecto del
+    panel superior, centrado en lo que marcó el usuario.
+    """
+    out_w, out_h = settings.output_width, settings.output_height
+    cam_h = int(round(out_h * CAM_FRACTION / 2)) * 2
+    aspect = out_w / cam_h  # en píxeles
+    x, y, w, h = (float(v) for v in cam_rect)
+    w, h = max(w, 0.02), max(h, 0.02)
+    cx, cy = x + w / 2, y + h / 2
+    if (w * src_w) / (h * src_h) < aspect:
+        w = h * src_h * aspect / src_w
+    else:
+        h = w * src_w / (aspect * src_h)
+    if w > 1.0:
+        w, h = 1.0, src_w / (aspect * src_h)
+    if h > 1.0:
+        h, w = 1.0, src_h * aspect / src_w
+    rect = [round(float(np.clip(cx - w / 2, 0, 1 - w)), 4), round(float(np.clip(cy - h / 2, 0, 1 - h)), 4),
+            round(w, 4), round(h, 4)]
+    gw = min(1.0, src_h * (out_w / (out_h - cam_h)) / src_w)
+    return {"layout": "split", "cam": rect, "game": [round((1 - gw) / 2, 4), 0.0, round(gw, 4), 1.0],
+            "cam_fraction": cam_h / out_h, "caption_y": cam_h / out_h, "manual": True}
+
+
 def _follow_plan(person: dict, src_w: int, src_h: int) -> dict:
     boxes = np.asarray(person["box"])
     face_h = float(np.median(boxes[:, 3]))

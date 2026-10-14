@@ -54,6 +54,8 @@ full research, with sources, is in
     shot length and **split screen** when they talk over each other.
   - **One person** → a 9:16 crop that follows them. **No faces** → full frame
     over a blurred background.
+  - If detection fails (mask, camera without a visible face…), **mark the
+    camera by hand** by dragging a rectangle over a frame.
 - 📝 **Viral short captions**: 1–3 uppercase words with a "pop", active word
   highlighted, keywords in green, **one color per speaker**, all inside the
   TikTok/Shorts/Reels safe zones. Karaoke and clean styles too. Free fonts

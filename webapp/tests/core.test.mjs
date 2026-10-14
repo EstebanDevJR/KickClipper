@@ -304,3 +304,12 @@ test("bookmarklet y lectura del payload", () => {
   assert.deepEqual(readKickPayload(loc), payload);
   assert.equal(readKickPayload({ hash: "" }), null);
 });
+
+test("cámara marcada a mano: split con el aspecto del panel", async () => {
+  const { splitFromRect } = await import("../js/vision-plan.js");
+  const p = splitFromRect([0.05, 0.6, 0.2, 0.3], 1920, 1080);
+  assert.equal(p.layout, "split");
+  const [x, y, w, h] = p.cam;
+  assert.ok(Math.abs((w * 1920) / (h * 1080) - 1080 / Math.round(1920 * CAM_FRACTION)) < 0.02);
+  assert.ok(x <= 0.05 + 1e-6 && x + w >= 0.25 - 1e-6 && y >= 0 && y + h <= 1.0001);
+});

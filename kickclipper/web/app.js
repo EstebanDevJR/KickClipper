@@ -206,8 +206,71 @@ function renderSignals(clip) {
   $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
 }
 
+/* ---------------- cámara marcada a mano ---------------- */
+
+let modalCam = null;  // [x, y, w, h] normalizado, null = detección automática
+
+/** Abre el selector sobre una imagen y resuelve con el rectángulo (o null). */
+function pickRect(imgSrc) {
+  return new Promise((resolve) => {
+    const picker = $("cam-picker"), stage = $("cam-stage"), img = $("cam-img"), sel = $("cam-sel");
+    picker.hidden = false;
+    sel.hidden = true;
+    img.src = imgSrc;
+    let start = null, rect = null;
+    const clamp = (v) => Math.min(Math.max(v, 0), 1);
+    const pos = (e) => {
+      const b = img.getBoundingClientRect();
+      return [clamp((e.clientX - b.left) / b.width), clamp((e.clientY - b.top) / b.height)];
+    };
+    const draw = () => {
+      sel.hidden = false;
+      Object.assign(sel.style, { left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` });
+    };
+    const down = (e) => { e.preventDefault(); start = pos(e); rect = [start[0], start[1], 0, 0]; stage.setPointerCapture(e.pointerId); };
+    const move = (e) => {
+      if (!start) return;
+      const p = pos(e);
+      rect = [Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.abs(p[0] - start[0]), Math.abs(p[1] - start[1])];
+      draw();
+    };
+    const up = () => { start = null; };
+    const finish = (value) => {
+      stage.removeEventListener("pointerdown", down);
+      stage.removeEventListener("pointermove", move);
+      stage.removeEventListener("pointerup", up);
+      $("cam-ok").onclick = $("cam-cancel").onclick = null;
+      picker.hidden = true;
+      resolve(value);
+    };
+    stage.addEventListener("pointerdown", down);
+    stage.addEventListener("pointermove", move);
+    stage.addEventListener("pointerup", up);
+    $("cam-ok").onclick = () => finish(rect && rect[2] > 0.02 && rect[3] > 0.02 ? rect.map((v) => Math.round(v * 1e4) / 1e4) : null);
+    $("cam-cancel").onclick = () => finish(undefined);
+  });
+}
+
+function showCamState() {
+  $("m-cam-state").textContent = modalCam ? "cámara marcada a mano ✓" : "cámara: detección automática";
+  $("m-cam-clear").hidden = !modalCam;
+}
+
+$("m-cam-btn").addEventListener("click", async () => {
+  if (!modalClip) return;
+  const t = (parseFloat($("m-start").value) + parseFloat($("m-end").value)) / 2;
+  const rect = await pickRect(`/api/clips/${modalClip.id}/frame?t=${t.toFixed(2)}&_=${Date.now()}`);
+  if (rect === undefined) return;  // cancelado
+  modalCam = rect;
+  if (rect) $("m-layout").value = "split";
+  showCamState();
+});
+$("m-cam-clear").addEventListener("click", () => { modalCam = null; showCamState(); });
+
 function openModal(clip) {
   modalClip = clip;
+  modalCam = clip.render_options?.cam_rect || null;
+  showCamState();
   const ro = clip.render_options || {};
   const fmt = ro.format || "short";
   $("m-title").value = clip.title || "";
@@ -295,6 +358,7 @@ $("m-render").addEventListener("click", async () => {
         show_hook: $("m-showtitle").checked,
         jumpcut: $("m-jumpcut").checked,
         hook_preview: $("m-preview").checked,
+        ...(modalCam ? { cam_rect: modalCam } : { clear_cam: true }),
       }),
     });
     patchClip(updated);

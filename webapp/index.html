@@ -205,6 +205,11 @@
             </select>
           </label>
         </div>
+        <div class="cam-line">
+          <button type="button" class="btn-small" id="m-cam-btn">📐 Marcar la cámara</button>
+          <span id="m-cam-state">cámara: detección automática</span>
+          <button type="button" class="btn-link" id="m-cam-clear" hidden>quitar</button>
+        </div>
         <div class="checks-row">
           <label class="check-line"><input type="checkbox" id="m-showhook" checked> Texto gancho</label>
           <label class="check-line"><input type="checkbox" id="m-jumpcut" checked> Quitar pausas</label>
@@ -231,6 +236,20 @@
           <a class="btn-download" id="m-download" hidden>⬇ DESCARGAR</a>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="cam-picker" id="cam-picker" hidden>
+  <div class="cam-picker-box">
+    <p>Arrastra un rectángulo sobre la <b>cámara del streamer</b>. Se usará arriba, con el gameplay debajo.</p>
+    <div class="cam-stage" id="cam-stage">
+      <img id="cam-img" alt="Fotograma del vídeo" draggable="false">
+      <div class="cam-sel" id="cam-sel" hidden></div>
+    </div>
+    <div class="cam-actions">
+      <button type="button" class="btn-small" id="cam-cancel">Cancelar</button>
+      <button type="button" class="btn-small primary" id="cam-ok">Usar esta cámara</button>
     </div>
   </div>
 </div>

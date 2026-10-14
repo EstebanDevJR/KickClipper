@@ -12,7 +12,7 @@
 import * as MB from "mediabunny";
 import { yieldToUI } from "./dsp.js";
 
-export { plan, speakerAt, planToOutput, CAM_FRACTION, MIN_SHOT } from "./vision-plan.js";
+export { plan, speakerAt, planToOutput, splitFromRect, CAM_FRACTION, MIN_SHOT } from "./vision-plan.js";
 
 const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
 const MP_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";

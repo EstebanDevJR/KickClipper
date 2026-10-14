@@ -197,6 +197,7 @@ siempre (las caras quedan diminutas en 9:16).
 | Texto gancho en pantalla los primeros segundos | ídem |
 | **Split cámara + gameplay** con detección automática de la facecam | `vision.py` + `renderer.py`, `webapp/js/vision.js` + `compositor.js` |
 | **Foco en el hablante activo** con duración mínima de plano y pantalla dividida en crosstalk | ídem |
+| Cámara **marcada a mano** cuando la detección falla (corrección manual, como en las herramientas comerciales) | editor de cada clip en ambas versiones |
 | **Jump cuts** de silencios (sin cortar tensión de gameplay) y **cold open** opcional | `timeline.py` / `timeline.js` |
 | Normalización **−14 LUFS** y exportación 1080×1920 H.264/AAC | `renderer.py`, `webapp/js/render.js` |
 

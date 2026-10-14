@@ -309,7 +309,13 @@ def render_clip(clip_id: str, overrides: dict | None = None) -> dict:
         # Encuadre: análisis de caras (se cachea por rango del clip)
         plan: dict = {}
         resolved = layout
-        if fmt == "short" and layout in ("auto", "split", "speaker", "follow"):
+        cam_rect = o.get("cam_rect")
+        if fmt == "short" and cam_rect and layout in ("auto", "split"):
+            # cámara marcada a mano: manda sobre la detección automática
+            size = vision.probe_size(source) or (1920, 1080)
+            plan = vision.split_from_rect(cam_rect, *size)
+            resolved = "split"
+        elif fmt == "short" and layout in ("auto", "split", "speaker", "follow"):
             cached = o.get("_plan") if o.get("_plan_range") == [start, end] else None
             if cached is None:
                 on_p(0.0, "Analizando encuadre (caras)")

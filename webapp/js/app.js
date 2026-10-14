@@ -9,7 +9,7 @@ import { chatActivity, spikeCurve } from "./chat.js";
 import { MODELS, defaultDevice, setTranscriber, transcribeRegions } from "./transcribe.js";
 import { LIMITS, detect, regionsToTranscribe } from "./highlights.js";
 import { WEBLLM_MODELS, createLLM, llmOptions } from "./llm.js";
-import { analyzeClip, plan as visionPlan, planToOutput, speakerAt } from "./vision.js";
+import { analyzeClip, plan as visionPlan, planToOutput, speakerAt, splitFromRect } from "./vision.js";
 import { buildTimeline } from "./timeline.js";
 import { buildCaptionTrack, loadFonts } from "./captions.js";
 import { createCompositor } from "./compositor.js";
@@ -378,7 +378,11 @@ export async function renderCandidate(clip, overrides = {}, signal = null, onRun
     // Encuadre (análisis de caras cacheado por rango)
     let plan = {};
     let resolved = o.layout;
-    if (["auto", "split", "speaker", "follow"].includes(o.layout)) {
+    if (o.camRect && ["auto", "split"].includes(o.layout)) {
+      // cámara marcada a mano: manda sobre la detección automática
+      plan = splitFromRect(o.camRect, src.width, src.height);
+      resolved = "split";
+    } else if (["auto", "split", "speaker", "follow"].includes(o.layout)) {
       const key = `${start}-${end}`;
       if (clip.planKey !== key) {
         progress(0, "Analizando encuadre");
@@ -466,7 +470,73 @@ function renderGrid() {
 
 // ---------------- modal ----------------
 
+// ---------------- cámara marcada a mano ----------------
+
+let modalCam = null; // [x, y, w, h] normalizado; null = detección automática
+
+/** Selector de rectángulo sobre una imagen: resuelve con el rectángulo, null (vacío) o undefined (cancelado). */
+function pickRect(imgSrc) {
+  return new Promise((resolve) => {
+    const picker = $("cam-picker"), stage = $("cam-stage"), img = $("cam-img"), sel = $("cam-sel");
+    picker.hidden = false;
+    sel.hidden = true;
+    img.src = imgSrc;
+    let start = null, rect = null;
+    const clamp = (v) => Math.min(Math.max(v, 0), 1);
+    const pos = (e) => {
+      const b = img.getBoundingClientRect();
+      return [clamp((e.clientX - b.left) / b.width), clamp((e.clientY - b.top) / b.height)];
+    };
+    const draw = () => {
+      sel.hidden = false;
+      Object.assign(sel.style, { left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` });
+    };
+    const down = (e) => { e.preventDefault(); start = pos(e); rect = [start[0], start[1], 0, 0]; stage.setPointerCapture(e.pointerId); };
+    const move = (e) => {
+      if (!start) return;
+      const p = pos(e);
+      rect = [Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.abs(p[0] - start[0]), Math.abs(p[1] - start[1])];
+      draw();
+    };
+    const up = () => { start = null; };
+    const finish = (value) => {
+      stage.removeEventListener("pointerdown", down);
+      stage.removeEventListener("pointermove", move);
+      stage.removeEventListener("pointerup", up);
+      $("cam-ok").onclick = $("cam-cancel").onclick = null;
+      picker.hidden = true;
+      resolve(value);
+    };
+    stage.addEventListener("pointerdown", down);
+    stage.addEventListener("pointermove", move);
+    stage.addEventListener("pointerup", up);
+    $("cam-ok").onclick = () => finish(rect && rect[2] > 0.02 && rect[3] > 0.02 ? rect.map((v) => Math.round(v * 1e4) / 1e4) : null);
+    $("cam-cancel").onclick = () => finish(undefined);
+  });
+}
+
+function showCamState() {
+  $("m-cam-state").textContent = modalCam ? "cámara marcada a mano ✓" : "cámara: detección automática";
+  $("m-cam-clear").hidden = !modalCam;
+}
+
+async function markCamera() {
+  const clip = state.modalClip, src = state.source;
+  if (!clip || !src) return;
+  const t = (parseFloat($("m-start").value) + parseFloat($("m-end").value)) / 2;
+  let frame;
+  try { frame = await thumbnail(src.analysisVideo, src.t0 + t, 960); } catch (err) { alert(`No se pudo leer el fotograma: ${err.message}`); return; }
+  const rect = await pickRect(frame);
+  URL.revokeObjectURL?.(frame);
+  if (rect === undefined) return;
+  modalCam = rect;
+  if (rect) $("m-layout").value = "split";
+  showCamState();
+}
+
 function setupModal() {
+  $("m-cam-btn").addEventListener("click", markCamera);
+  $("m-cam-clear").addEventListener("click", () => { modalCam = null; showCamState(); });
   $("modal-close").addEventListener("click", closeModal);
   $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeModal(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
@@ -484,6 +554,7 @@ function setupModal() {
         start: parseFloat($("m-start").value), end: parseFloat($("m-end").value),
         layout: $("m-layout").value, captionStyle: $("m-capstyle").value,
         showHook: $("m-showhook").checked, jumpcut: $("m-jumpcut").checked, preview: $("m-preview").checked,
+        camRect: modalCam,
       });
     } catch (err) {
       alert(`Error al renderizar: ${err.message || err}`);
@@ -507,6 +578,8 @@ function publishText(clip) {
 function openModal(clip) {
   state.modalClip = clip;
   const o = clip.opts;
+  modalCam = o.camRect || null;
+  showCamState();
   $("m-title").value = clip.title;
   $("m-hook").value = clip.hookText;
   $("m-start").value = (o.start ?? clip.start).toFixed(1);

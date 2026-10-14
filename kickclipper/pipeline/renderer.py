@@ -296,11 +296,11 @@ def _has_audio(source: Path) -> bool:
     return _audio_cache[key]
 
 
-def thumbnail(source: Path, t: float, out: Path) -> Path:
+def thumbnail(source: Path, t: float, out: Path, width: int = 480) -> Path:
     """Extrae un fotograma como miniatura JPEG."""
     subprocess.run(
         [settings.ffmpeg_bin, "-y", "-ss", f"{t:.2f}", "-i", str(source),
-         "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4", str(out)],
+         "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(out)],
         check=True, capture_output=True,
     )
     return out

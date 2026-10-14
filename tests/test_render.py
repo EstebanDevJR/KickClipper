@@ -109,3 +109,16 @@ def test_runner_render_clip_end_to_end(tmp_path, ffmpeg):
     assert updated["file"].endswith(".mp4")
     publish = open(updated["file"].replace(".mp4", ".txt"), encoding="utf-8").read()
     assert "Un título de prueba" in publish and "#a" in publish
+
+
+def test_runner_manual_cam_rect(tmp_path, ffmpeg):
+    job = db.create_job("https://kick.com/canalprueba/videos/5c697a87-afce-4256-b01f-3c8fe71ef5cb",
+                        {"formats": ["short"]})
+    wd = runner.job_dir(job["id"])
+    wd.mkdir(parents=True, exist_ok=True)
+    make_video(wd / "source.mp4", seconds=18)
+    clip = db.create_clip(job["id"], start=0.0, end=16.0, score=5, title="Cámara a mano",
+                          transcript="t", words=_words(n=30, step=0.5), render_options={"format": "short"})
+    updated = runner.render_clip(clip["id"], {"cam_rect": [0.7, 0.6, 0.25, 0.35], "jumpcut": False})
+    assert updated["render_options"]["layout_used"] == "split"
+    assert media_info(updated["file"])["size"] == (1080, 1920)

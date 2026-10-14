@@ -57,6 +57,8 @@ plataformas; la investigación completa, con fuentes, está en
     cuando hablan a la vez.
   - **Una persona** → recorte 9:16 que la sigue. **Sin caras** → vídeo
     completo sobre fondo difuminado.
+  - Si la detección falla (máscara, cámara sin cara visible…), **marca la
+    cámara a mano** arrastrando un rectángulo sobre un fotograma.
 - 📝 **Subtítulos de short viral**: 1-3 palabras en mayúsculas con "pop",
   palabra activa resaltada, palabras clave en verde, **un color por
   hablante**, todo dentro de las zonas seguras de TikTok/Shorts/Reels.
