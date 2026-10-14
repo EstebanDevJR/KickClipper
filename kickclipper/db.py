@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS clips (
     status TEXT DEFAULT 'candidate',       -- candidate|rendering|rendered|error
     file TEXT DEFAULT '',
     render_options TEXT DEFAULT '{}',
+    meta TEXT DEFAULT '{}',                -- texto gancho, palabras clave, categoría, señales…
     created_at REAL
 );
 """
@@ -70,6 +71,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "description" not in cols:
         conn.execute("ALTER TABLE clips ADD COLUMN description TEXT DEFAULT ''")
         conn.commit()
+    if "meta" not in cols:
+        conn.execute("ALTER TABLE clips ADD COLUMN meta TEXT DEFAULT '{}'")
+        conn.commit()
 
 
 def _execute(sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -81,7 +85,7 @@ def _execute(sql: str, params: tuple = ()) -> sqlite3.Cursor:
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
-    for key in ("options", "hashtags", "words", "render_options"):
+    for key in ("options", "hashtags", "words", "render_options", "meta"):
         if key in d and isinstance(d[key], str):
             try:
                 d[key] = json.loads(d[key])
@@ -124,9 +128,12 @@ def delete_job(job_id: str) -> None:
 
 # ---------- Clips ----------
 
+_JSON_FIELDS = ("hashtags", "words", "render_options", "meta")
+
+
 def create_clip(job_id: str, **fields: Any) -> dict:
     clip_id = uuid.uuid4().hex[:12]
-    for key in ("hashtags", "words", "render_options"):
+    for key in _JSON_FIELDS:
         if key in fields and not isinstance(fields[key], str):
             fields[key] = json.dumps(fields[key], ensure_ascii=False)
     cols = ["id", "job_id", "created_at", *fields.keys()]
@@ -151,7 +158,7 @@ def list_clips(job_id: str) -> list[dict]:
 
 
 def update_clip(clip_id: str, **fields: Any) -> None:
-    for key in ("hashtags", "words", "render_options"):
+    for key in _JSON_FIELDS:
         if key in fields and not isinstance(fields[key], str):
             fields[key] = json.dumps(fields[key], ensure_ascii=False)
     cols = ", ".join(f"{k}=?" for k in fields)

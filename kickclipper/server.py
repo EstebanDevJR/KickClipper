@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import db, streamers
 from .config import settings
 from .events import bus
-from .pipeline import runner
+from .pipeline import renderer, runner, subtitles, vision
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -41,10 +41,16 @@ class RenderRequest(BaseModel):
     start: float | None = None
     end: float | None = None
     title: str | None = None
-    layout: str | None = None        # "blur" | "crop"
+    # "auto" (detecta facecam / hablantes) | "split" | "speaker" | "follow" | "blur" | "crop"
+    layout: str | None = None
     format: str | None = None        # "short" (9:16) | "video" (16:9)
     subtitles: bool | None = None
-    show_title: bool | None = None
+    caption_style: str | None = None  # "viral" | "karaoke" | "clean"
+    hook_text: str | None = None      # texto gancho de los primeros segundos
+    show_hook: bool | None = None
+    show_title: bool | None = None    # compatibilidad: equivale a show_hook
+    jumpcut: bool | None = None       # recortar pausas
+    hook_preview: bool | None = None  # cold open: adelanto del clímax al inicio
 
 
 # ---------- Jobs ----------
@@ -171,6 +177,12 @@ async def api_status():
         "whisper_model": settings.whisper_model
         if settings.whisper_engine == "mlx" else settings.faster_whisper_model,
         "formats": list(streamers.FORMATS),
+        "layouts": list(renderer.LAYOUTS),
+        "caption_styles": list(subtitles.STYLES),
+        "caption_style": settings.caption_style,
+        "vision": vision.available(),
+        "chat_signal": settings.chat_signal,
+        "jumpcut": settings.jumpcut,
         "streamer_socials": {ch: streamers.socials(ch) for ch in settings.streamer_socials},
         "output_dir": str(settings.output_dir),
     }

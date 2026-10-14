@@ -34,6 +34,14 @@
       <span class="led"></span>
       <div><b>Ollama</b><i id="ollama-detail">—</i></div>
     </div>
+    <div class="gear" id="gear-vision">
+      <span class="led"></span>
+      <div><b>Caras</b><i id="vision-detail">facecam · hablante activo</i></div>
+    </div>
+    <div class="gear" id="gear-chat">
+      <span class="led"></span>
+      <div><b>Chat del VOD</b><i id="chat-detail">señal de picos</i></div>
+    </div>
   </div>
 
   <div class="rack-section">
@@ -53,7 +61,7 @@
     <ol class="pipe-legend">
       <li><em>01</em> Descarga del VOD</li>
       <li><em>02</em> Transcripción IA</li>
-      <li><em>03</em> Análisis de hype</li>
+      <li><em>03</em> Hype: audio + chat</li>
       <li><em>04</em> Puntuación LLM</li>
       <li><em>05</em> Render final</li>
     </ol>
@@ -134,6 +142,9 @@
         <label>Título del clip
           <input type="text" id="m-title" maxlength="90">
         </label>
+        <label>Texto gancho (primeros segundos)
+          <input type="text" id="m-hook" maxlength="60" placeholder="3-6 palabras: NO SABÍA QUE ERA ÉL">
+        </label>
         <div class="row2">
           <label>Inicio (s)
             <input type="number" id="m-start" step="0.5" min="0">
@@ -149,19 +160,38 @@
               <option value="video">Video 16:9 (5-10 min)</option>
             </select>
           </label>
-          <label>Estilo (short)
+          <label>Encuadre (short)
             <select id="m-layout">
+              <option value="auto">Automático (detecta caras)</option>
+              <option value="split">Cámara arriba + gameplay</option>
+              <option value="speaker">Foco en quien habla</option>
+              <option value="follow">Seguir a la persona</option>
               <option value="blur">Fondo difuminado</option>
               <option value="crop">Recorte central</option>
             </select>
           </label>
         </div>
-        <label class="check-line">
-          <input type="checkbox" id="m-subs" checked> Subtítulos
-        </label>
-        <label class="check-line">
-          <input type="checkbox" id="m-showtitle" checked> Mostrar rótulo de título
-        </label>
+        <div class="row2">
+          <label>Subtítulos
+            <select id="m-capstyle">
+              <option value="viral">Viral (1-3 palabras, pop)</option>
+              <option value="karaoke">Karaoke (4 palabras)</option>
+              <option value="clean">Limpios (frases)</option>
+              <option value="none">Sin subtítulos</option>
+            </select>
+          </label>
+          <div class="checks">
+            <label class="check-line">
+              <input type="checkbox" id="m-showtitle" checked> Texto gancho
+            </label>
+            <label class="check-line">
+              <input type="checkbox" id="m-jumpcut" checked> Quitar pausas
+            </label>
+            <label class="check-line" title="Muestra 2 s del clímax al principio y luego el clip desde el inicio">
+              <input type="checkbox" id="m-preview"> Cold open
+            </label>
+          </div>
+        </div>
         <div class="m-publish">
           <div class="m-publish-head">
             <span>PARA PUBLICAR</span>
@@ -172,6 +202,7 @@
                     placeholder="Descripción recomendada (incluye redes y hashtags)"></textarea>
         </div>
         <div class="m-meta">
+          <div class="m-signals" id="m-signals"></div>
           <div class="m-reason" id="m-reason"></div>
           <div class="m-tags" id="m-tags"></div>
         </div>

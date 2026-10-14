@@ -58,11 +58,19 @@ class Settings(BaseSettings):
     ollama_timeout: float = 180.0
     llm_max_candidates: int = 24  # ventanas que se mandan al LLM (las mejores por heurística)
 
+    # Chat del VOD como señal (velocidad de mensajes). Solo pide el chat del
+    # VOD que se está procesando, con un tope de peticiones y pausas entre ellas.
+    chat_signal: bool = True
+    chat_max_requests: int = 400
+    chat_request_delay: float = 0.15
+    chat_lag_seconds: float = 6.0  # el chat reacciona unos segundos DESPUÉS del momento
+
     # Detección de highlights
-    # Shorts (9:16): máximo 1 minuto, no son videos
+    # Shorts (9:16): por defecto hasta 1 minuto (YouTube Shorts y Reels admiten
+    # hasta 3 min; TikTok solo monetiza > 1 min: sube KC_MAX_CLIP_SECONDS si te interesa)
     min_clip_seconds: float = 15.0
     max_clip_seconds: float = 60.0
-    target_clip_seconds: float = 45.0
+    target_clip_seconds: float = 40.0
     # Videos (16:9): entre 5 y 10 minutos, no son shorts
     video_min_seconds: float = 300.0
     video_max_seconds: float = 600.0
@@ -75,9 +83,22 @@ class Settings(BaseSettings):
     output_height: int = 1920
     video_width: int = 1920      # video horizontal
     video_height: int = 1080
-    video_bitrate: str = "7M"
+    output_fps: int = 30
+    video_bitrate: str = "10M"
     use_videotoolbox: bool = platform.system() == "Darwin"
-    subtitle_font: str = "Arial Black"
+    # Subtítulos: "viral" (1-3 palabras en mayúsculas con pop), "karaoke"
+    # (4 palabras con la activa resaltada), "clean" (frases de 1-2 líneas) o "none".
+    caption_style: str = "viral"
+    # Fuentes incluidas en kickclipper/assets/fonts (OFL); se usan si no se
+    # fuerza otra con KC_SUBTITLE_FONT.
+    subtitle_font: str = ""
+    # Ritmo: elimina pausas sin voz (y sin acción en el audio) en los shorts
+    jumpcut: bool = True
+    jumpcut_min_gap: float = 0.7    # pausas más largas que esto se acortan
+    # Audio a -14 LUFS (referencia de YouTube/TikTok)
+    loudnorm: bool = True
+    # Detección de caras para elegir el encuadre (facecam, hablante activo)
+    face_detection: bool = True
 
     def clip_limits(self, fmt: str) -> tuple[float, float, float]:
         """(mínimo, máximo, objetivo) de duración en segundos para un formato."""
@@ -92,6 +113,14 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "kickclipper.db"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.data_dir / "models"
+
+    @property
+    def fonts_dir(self) -> Path:
+        return Path(__file__).parent / "assets" / "fonts"
 
 
 settings = Settings()

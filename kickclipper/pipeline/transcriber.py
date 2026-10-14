@@ -7,6 +7,8 @@ Dos motores:
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -31,14 +33,50 @@ _MLX_REPOS = {
 }
 
 
+# Frases que Whisper "alucina" sobre música o silencio (vienen de los
+# subtítulos con los que se entrenó): no son habla real del streamer.
+_HALLUCINATIONS = {
+    "subtitulos realizados por la comunidad de amaraorg",
+    "subtitulos por la comunidad de amaraorg",
+    "subtitulado por la comunidad de amaraorg",
+    "gracias por ver el video", "gracias por ver", "suscribete",
+    "thanks for watching", "thank you for watching", "thank you",
+    "subtitles by the amaraorg community", "musica", "music", "applause",
+    "please subscribe", "like and subscribe",
+}
+
+
 def transcribe(audio: Path, on_progress: ProgressFn | None = None) -> list[Segment]:
     engine = settings.whisper_engine
     if engine == "mlx":
         try:
-            return _transcribe_mlx(audio, on_progress)
+            return clean_segments(_transcribe_mlx(audio, on_progress))
         except Exception:
             log.exception("mlx-whisper falló; usando faster-whisper")
-    return _transcribe_faster(audio, on_progress)
+    return clean_segments(_transcribe_faster(audio, on_progress))
+
+
+def _norm(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9 ]+", "", text).strip()
+
+
+def clean_segments(segments: list[Segment]) -> list[Segment]:
+    """Quita alucinaciones conocidas y repeticiones en bucle de Whisper."""
+    out: list[Segment] = []
+    repeat = 0
+    for seg in segments:
+        norm = _norm(seg["text"])
+        if not norm or norm in _HALLUCINATIONS:
+            continue
+        if out and _norm(out[-1]["text"]) == norm:
+            repeat += 1
+            if repeat >= 2:  # la misma frase 3+ veces seguidas: bucle del modelo
+                continue
+        else:
+            repeat = 0
+        out.append(seg)
+    return out
 
 
 def _transcribe_mlx(audio: Path, on_progress: ProgressFn | None) -> list[Segment]:
@@ -47,14 +85,18 @@ def _transcribe_mlx(audio: Path, on_progress: ProgressFn | None) -> list[Segment
     repo = _MLX_REPOS.get(settings.whisper_model, settings.whisper_model)
     if on_progress:
         on_progress(0.05, f"Transcribiendo (MLX {settings.whisper_model})")
-    result = mlx_whisper.transcribe(
-        str(audio),
+    kwargs = dict(
         path_or_hf_repo=repo,
         word_timestamps=True,
         language=settings.whisper_language,
         condition_on_previous_text=False,
         verbose=None,
     )
+    try:
+        # Salta silencios largos donde Whisper suele inventar texto
+        result = mlx_whisper.transcribe(str(audio), hallucination_silence_threshold=2.0, **kwargs)
+    except TypeError:
+        result = mlx_whisper.transcribe(str(audio), **kwargs)
     segments = []
     for seg in result.get("segments", []):
         words = [
@@ -80,7 +122,11 @@ def _transcribe_faster(audio: Path, on_progress: ProgressFn | None) -> list[Segm
 
     if on_progress:
         on_progress(0.05, f"Transcribiendo (faster-whisper {settings.faster_whisper_model})")
-    model = WhisperModel(settings.faster_whisper_model, device="cpu", compute_type="int8")
+    try:
+        # GPU (CUDA) si la hay; si no, CPU con el tipo de cálculo más rápido
+        model = WhisperModel(settings.faster_whisper_model, device="auto", compute_type="auto")
+    except Exception:
+        model = WhisperModel(settings.faster_whisper_model, device="cpu", compute_type="int8")
     seg_iter, info = model.transcribe(
         str(audio),
         word_timestamps=True,

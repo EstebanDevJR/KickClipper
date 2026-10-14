@@ -361,6 +361,17 @@ body {
 .m-publish textarea:focus { border-color: var(--green-dim); }
 
 .m-meta { border-top: 1px dashed var(--line); padding-top: 13px; }
+.checks { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.m-signals { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin-bottom: 10px; }
+.m-signals .chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.m-signals .chip {
+  font-family: var(--mono); font-size: 10.5px; color: var(--amber);
+  border: 1px solid rgba(255,210,74,.3); background: rgba(255,210,74,.07);
+  padding: 2px 8px; border-radius: 999px;
+}
+.sig { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+.sig i { height: 6px; border-radius: 3px; background: var(--bg-2); position: relative; overflow: hidden; }
+.sig i::after { content: ""; position: absolute; inset: 0; width: var(--v); background: linear-gradient(90deg, var(--green-dim), var(--green)); }
 .m-reason { font-size: 12.5px; color: var(--text-dim); font-style: italic; line-height: 1.5; }
 .m-tags { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
 .m-tags span {

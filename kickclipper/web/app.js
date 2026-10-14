@@ -38,6 +38,10 @@ async function refreshStatus() {
     setLed("gear-ffmpeg", s.ffmpeg);
     setLed("gear-whisper", true);
     setLed("gear-ollama", s.ollama);
+    setLed("gear-vision", s.vision);
+    setLed("gear-chat", s.chat_signal);
+    $("vision-detail").textContent = s.vision ? "facecam · hablante activo" : "instala opencv-python-headless";
+    $("chat-detail").textContent = s.chat_signal ? "picos de mensajes" : "desactivado (KC_CHAT_SIGNAL)";
     $("whisper-detail").textContent = `${s.whisper_engine} · ${s.whisper_model}`;
     $("ollama-detail").textContent = s.ollama
       ? s.ollama_model : "servidor apagado — ejecuta `ollama serve`";
@@ -178,18 +182,48 @@ function publishDesc(clip, channel) {
   return parts.join("\n\n");
 }
 
+const LAYOUT_LABEL = {
+  split: "cámara + gameplay", speaker: "foco en quien habla", follow: "sigue a la persona",
+  blur: "fondo difuminado", crop: "recorte central",
+};
+const SIGNAL_LABEL = { audio: "audio", chat: "chat", hook: "gancho", reactions: "reacciones", density: "habla" };
+
+function renderSignals(clip) {
+  const meta = clip.meta || {};
+  const sig = meta.signals || {};
+  const bars = Object.entries(SIGNAL_LABEL)
+    .filter(([k]) => typeof sig[k] === "number")
+    .map(([k, label]) => `<div class="sig"><span>${label}</span><i style="--v:${Math.round(sig[k] * 100)}%"></i></div>`)
+    .join("");
+  const chips = [];
+  if (meta.category) chips.push(`<span class="chip">${esc(meta.category)}</span>`);
+  const used = clip.render_options?.layout_used;
+  if (used) chips.push(`<span class="chip">encuadre: ${esc(LAYOUT_LABEL[used] || used)}</span>`);
+  if (meta.llm_scores?.hook !== undefined) {
+    const l = meta.llm_scores;
+    chips.push(`<span class="chip">IA · gancho ${l.hook} · se entiende ${l.standalone} · remate ${l.payoff}</span>`);
+  }
+  $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
+}
+
 function openModal(clip) {
   modalClip = clip;
+  const ro = clip.render_options || {};
+  const fmt = ro.format || "short";
   $("m-title").value = clip.title || "";
+  $("m-hook").value = ro.hook_text || clip.meta?.hook_text || "";
   $("m-start").value = clip.start;
   $("m-end").value = clip.end;
-  $("m-layout").value = clip.render_options?.layout || "blur";
+  $("m-layout").value = ro.layout || "auto";
 
   const job = jobs.find((j) => j.id === clip.job_id);
-  $("m-format").value = clip.render_options?.format || "short";
-  $("m-subs").checked = clip.render_options?.subtitles !== false;
-  $("m-showtitle").checked = clip.render_options?.show_title !== false;
+  $("m-format").value = fmt;
+  $("m-capstyle").value = ro.subtitles === false ? "none" : (ro.caption_style || (fmt === "video" ? "clean" : "viral"));
+  $("m-showtitle").checked = (ro.show_hook ?? ro.show_title ?? fmt === "short") !== false;
+  $("m-jumpcut").checked = ro.jumpcut !== false && fmt === "short";
+  $("m-preview").checked = !!ro.hook_preview;
   $("m-desc").value = publishDesc(clip, channelOf(job));
+  renderSignals(clip);
   $("m-reason").textContent = clip.reason || "";
   $("m-tags").innerHTML = (clip.hashtags || []).map((h) => `<span>#${esc(h)}</span>`).join("");
   $("m-progress").hidden = true;
@@ -223,7 +257,10 @@ function closeModal() {
 $("modal-close").addEventListener("click", closeModal);
 // En videos los subtítulos no son necesarios; en shorts sí por defecto
 $("m-format").addEventListener("change", () => {
-  $("m-subs").checked = $("m-format").value !== "video";
+  const video = $("m-format").value === "video";
+  $("m-capstyle").value = video ? "none" : "viral";
+  $("m-jumpcut").checked = !video;
+  $("m-showtitle").checked = !video;
 });
 
 async function copyToClipboard(btn, text) {
@@ -248,16 +285,20 @@ $("m-render").addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({
         title: $("m-title").value,
+        hook_text: $("m-hook").value.trim(),
         start: parseFloat($("m-start").value),
         end: parseFloat($("m-end").value),
         layout: $("m-layout").value,
         format: $("m-format").value,
-        subtitles: $("m-subs").checked,
-        show_title: $("m-showtitle").checked,
+        subtitles: $("m-capstyle").value !== "none",
+        caption_style: $("m-capstyle").value === "none" ? null : $("m-capstyle").value,
+        show_hook: $("m-showtitle").checked,
+        jumpcut: $("m-jumpcut").checked,
+        hook_preview: $("m-preview").checked,
       }),
     });
     patchClip(updated);
-    if (modalClip && modalClip.id === updated.id) { modalClip = updated; updateModalVideo(updated); }
+    if (modalClip && modalClip.id === updated.id) { modalClip = updated; updateModalVideo(updated); renderSignals(updated); }
   } catch (err) {
     alert("Error al renderizar: " + err.message);
   } finally {
