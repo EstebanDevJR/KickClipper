@@ -2,60 +2,136 @@
 
 > 🇪🇸 [Documentación en español](README.es.md)
 
-**100% local** tool that turns Kick VODs into ready-to-upload content — vertical
-**shorts** (9:16, with karaoke subtitles) for YouTube Shorts / TikTok / Reels, or
-horizontal **videos** (16:9, 5–10 min) for YouTube — with automatic highlight
-detection powered by AI running entirely on your machine.
+Turns Kick VODs into ready-to-upload content: vertical **shorts** (9:16) for
+YouTube Shorts / TikTok / Reels and horizontal **videos** (16:9, 5–10 min)
+for YouTube, with automatic highlight detection powered by AI running **on
+your own device**.
 
-Works with **any kick.com channel**, in any language. No cloud APIs, no keys,
-no uploads: download, transcription, scoring and rendering all happen locally.
+Two ways to use it, neither needs cloud APIs or keys:
+
+| | 🌐 **Web version** | 🖥️ **Desktop version** |
+|---|---|---|
+| Runs in | your browser (Chrome/Edge) | a local server (Python) |
+| Install | none: open the site | `uv` + ffmpeg + Ollama |
+| Hosting | static and free (GitHub Pages) | your machine |
+| Transcription | Whisper in the browser (WebGPU/WASM) | Whisper large-v3-turbo (MLX / faster-whisper) |
+| AI ranking | optional: WebLLM or Chrome's built-in AI | Ollama (`qwen3:8b`) |
+| Formats | 9:16 shorts | 9:16 shorts + 16:9 videos |
+
+Either way the video, the transcript and the clips **never leave your
+device**.
 
 > ⚖️ **Use responsibly.** Only process content you have the rights to, or
 > explicit permission from the creator. Most platforms require permission to
 > re-upload someone else's stream.
 
-## Features
+## What it does (and why)
 
-- 🎯 **Automatic highlight detection** — audio excitement analysis (RMS +
-  spectral flux) plus lexical signals, then a local LLM (Ollama) scores each
-  candidate for viral potential.
-- ✂️ **Two output formats per job** — generate shorts (15 s – 1 min), long-form
-  videos (5 – 10 min), or both at once.
-- 📝 **Word-level karaoke subtitles** on shorts, styled for vertical content
-  (videos render clean by default; subtitles can be toggled per clip).
-- 🤖 **Publish-ready metadata** — the LLM writes a hook title, description and
-  hashtags in the language of the stream; each export ships with a `.txt`
-  ready to paste.
-- 🖥️ **Local web studio** — real-time pipeline progress (SSE), candidate
-  review with thumbnails, trim start/end, re-render, preview and download.
-- 🍎 **Hardware encoding** on macOS (VideoToolbox) and GPU transcription on
-  Apple Silicon (MLX); CPU fallback (`faster-whisper`) everywhere else.
+Everything is based on how clippers work and what the platforms reward; the
+full research, with sources, is in
+**[docs/GUIA_CLIPS_VIRALES.md](docs/GUIA_CLIPS_VIRALES.md)** (Spanish).
 
-## How it works
+- 🎯 **Moment detection like a clipper**
+  - **Audio**: loudness against the stream's *local* baseline (a scream in a
+    calm stream counts even if other parts are louder), spectral changes,
+    voice brightness (screams) and laughter rhythm.
+  - **VOD chat**: message rate against its rolling baseline plus the share of
+    laugh/hype messages (KEKW, lol, W…), compensating for chat reacting a few
+    seconds *after* the moment.
+  - **Clip-shaped candidates**: setup → peak → reaction, aligned to sentences,
+    plus sliding windows for stories and opinions.
+  - **Heuristics**: hook strength in the first 3 s, speech density, reaction
+    words, ending on the payoff, dead-air penalty.
+  - **Local LLM** (optional on the web): scores viral potential, hook,
+    standalone context and payoff; **picks the start and end sentence**, and
+    writes the title, an **on-screen hook text**, description, hashtags and
+    caption keywords.
+  - Automatically trims hook-less intros ("ok chat, so…") and long tails.
+- 🎥 **Smart vertical framing** (face detection)
+  - **Facecam + gameplay** → camera on top, game below, captions on the seam.
+  - **Several people (podcast, group IRL)** → crop on **whoever is talking**
+    (mouth movement matched with speech), hard cut on speaker change, minimum
+    shot length and **split screen** when they talk over each other.
+  - **One person** → a 9:16 crop that follows them. **No faces** → full frame
+    over a blurred background.
+- 📝 **Viral short captions**: 1–3 uppercase words with a "pop", active word
+  highlighted, keywords in green, **one color per speaker**, all inside the
+  TikTok/Shorts/Reels safe zones. Karaoke and clean styles too. Free fonts
+  bundled.
+- ✂️ **Pacing**: jump cuts that remove speech pauses *without* cutting
+  gameplay tension (only when the audio is calm too) and an optional
+  **cold open** (2 s of the climax up front).
+- 🔊 **Audio at −14 LUFS** (YouTube/TikTok reference) with a peak limiter.
+- 🤖 **Publish-ready**: title, description, hashtags and channel links in a
+  `.txt` next to every clip.
+
+## 🌐 Web version (free, no server)
+
+Folder [`webapp/`](webapp/): HTML/CSS/JS with no build step. All the heavy
+lifting happens in the user's browser:
+
+| Stage | Technology |
+|---|---|
+| Read video (MP4/MKV/WebM/MOV/TS) and **HLS** (Kick VODs) | [mediabunny](https://github.com/Vanilagy/mediabunny) + WebCodecs |
+| Audio analysis | hand-written JS DSP (FFT, envelope, loudness) |
+| Transcription | [transformers.js](https://github.com/huggingface/transformers.js) + word-timestamped Whisper (WebGPU or WASM) |
+| Faces / who is talking | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe) (detector + `jawOpen`) |
+| AI ranking (optional) | [WebLLM](https://github.com/mlc-ai/web-llm) (Qwen3) or Chrome's Prompt API |
+| Render | Canvas + WebCodecs → MP4 H.264/AAC (or WebM VP9 when the browser can't encode H.264) |
+
+What makes it feasible in a browser:
+
+- **Analyze the lightest variant**: from an HLS VOD only the lowest-bitrate
+  variant is downloaded for audio analysis; full quality is fetched only for
+  the ranges being rendered.
+- **Transcribe only where it matters**: on long VODs Whisper runs only around
+  audio/chat peaks (configurable depth: 15, 30 or 90 minutes of audio).
+
+### Kick VODs without a server: the bookmarklet
+
+A third-party site can't read Kick's API (CORS). Instead of running a proxy,
+the site generates a **bookmarklet**: drag it to your bookmarks bar, open the
+VOD on kick.com and click it. The code runs on kick.com with your session,
+reads the video URL and opens KickClipper with the VOD ready. The Kick tab
+stays open as a **bridge**: if the browser blocks the direct download or the
+**VOD chat** is needed, the app asks it via `postMessage` (GET requests to
+kick.com and the video host only).
+
+You can also drop a video file or paste a direct URL (MP4/M3U8 with CORS).
+
+### Deploy it for free on GitHub Pages
+
+1. In the repository: **Settings → Pages → Source: GitHub Actions**.
+2. Push to `main`: the [`pages.yml`](.github/workflows/pages.yml) workflow runs
+   the tests and publishes `webapp/` at `https://<user>.github.io/<repo>/`.
+
+Any static host works too (Cloudflare Pages, Netlify, Vercel…): no special
+headers needed. To try it locally:
+
+```bash
+python3 -m http.server -d webapp 8000   # then open http://localhost:8000
+```
+
+User requirements: a recent desktop Chrome, Edge or Opera (WebCodecs; with
+WebGPU the AI is much faster). The first run downloads the transcription
+model (~150 MB, or ~1 GB for the accurate one) and, if enabled, the LLM
+(~1 GB); after that they stay in the browser cache.
+
+## 🖥️ Desktop version
 
 ```
-VOD URL ─▶ ① Download (yt-dlp) ─▶ ② Transcribe (local Whisper)
-        ─▶ ③ Hype analysis (audio energy + lexical signals)
-        ─▶ ④ Viral scoring (local LLM via Ollama)
-        ─▶ ⑤ Render: 9:16 shorts (≤1 min, karaoke subtitles)
-                     and/or 16:9 videos (5–10 min)
+VOD URL ─▶ ① Download (yt-dlp)  +  VOD chat (in parallel)
+        ─▶ ② Transcribe (local Whisper)
+        ─▶ ③ Hype: audio + chat
+        ─▶ ④ Peak-based candidates + heuristics + local LLM (Ollama)
+        ─▶ ⑤ Framing (faces) + jump cuts + captions + ffmpeg render
 ```
 
-1. **Download** — `yt-dlp` fetches the VOD (or just the time range you pick).
-2. **Transcribe** — Whisper with word timestamps; language auto-detected.
-3. **Hype analysis** — a per-second excitement curve flags screams, laughter
-   and big reactions.
-4. **AI selection** — the best candidate windows are scored by a local LLM,
-   which also writes the title, description and hashtags. Shorts and videos
-   are searched separately, each with its own duration range.
-5. **Render** — shorts at 1080×1920 with blurred background or center crop;
-   videos at 1920×1080. Finished files land in `output/<channel>/<shorts|videos>/`
-   next to a `.txt` with everything you need to publish.
-
-## Requirements
+### Requirements
 
 - Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/)
 - [Ollama](https://ollama.com) running with a model (`ollama pull qwen3:8b`)
+  — it still works without it, using automatic signals only.
 - ffmpeg **with libass** (for subtitles). If yours doesn't have it (current
   Homebrew builds don't), run:
 
@@ -63,7 +139,7 @@ VOD URL ─▶ ① Download (yt-dlp) ─▶ ② Transcribe (local Whisper)
   ./scripts/get_ffmpeg.sh   # downloads a static binary to ./bin/ffmpeg
   ```
 
-## Quick start
+### Quick start
 
 ```bash
 git clone https://github.com/<you>/kickclipper.git
@@ -81,11 +157,16 @@ Then, in the web UI:
 2. Pick what to generate: **shorts 9:16**, **videos 16:9**, or both.
 3. Optionally limit the time range (`01:00:00-01:30:00`).
 4. Hit **CLIPEAR** and watch the pipeline run.
+5. For each clip you can change the **framing** (auto, camera + gameplay,
+   focus on the speaker, follow the person, blurred, center crop), the
+   **caption** style, the **hook text**, **jump cuts** and the **cold open**,
+   and re-render.
 
 The first transcription downloads the Whisper model (~1.5 GB for
-`large-v3-turbo`); after that everything is offline except the VOD download.
+`large-v3-turbo`) and the first face-aware render the YuNet model (230 KB);
+after that everything is offline except the VOD download and its chat.
 
-## Output
+### Output
 
 Each rendered clip is exported as an upload-ready `.mp4` plus a `.txt` with
 the recommended title, description, hashtags and the channel's links, sorted
@@ -109,24 +190,35 @@ When you've uploaded everything and want the space back:
 ./scripts/clean_uploads.sh --all -y           # everything: output/ + data/
 ```
 
-## Configuration
+### Configuration
 
 Environment variables with the `KC_` prefix, or a `.env` file:
 
 | Variable | Default | Description |
 |---|---|---|
 | `KC_OLLAMA_MODEL` | `qwen3:8b` | LLM used to score highlights |
-| `KC_WHISPER_ENGINE` | auto | `mlx` (Apple Silicon) or `faster-whisper` |
+| `KC_WHISPER_ENGINE` | auto | `mlx` (Apple Silicon) or `faster-whisper` (uses CUDA when available) |
 | `KC_WHISPER_MODEL` | `large-v3-turbo` | Whisper model (MLX engine) |
-| `KC_FASTER_WHISPER_MODEL` | `large-v3-turbo` | Whisper model (CPU engine) |
+| `KC_FASTER_WHISPER_MODEL` | `large-v3-turbo` | Whisper model (faster-whisper engine) |
 | `KC_WHISPER_LANGUAGE` | auto-detect | Force a transcription language (e.g. `es`, `en`) |
 | `KC_MIN_CLIP_SECONDS` | `15` | Minimum short duration |
-| `KC_MAX_CLIP_SECONDS` | `60` | Maximum short duration (1 min) |
+| `KC_MAX_CLIP_SECONDS` | `60` | Maximum short duration (Shorts and Reels allow up to 180; TikTok only pays for > 60) |
+| `KC_TARGET_CLIP_SECONDS` | `40` | Preferred short duration |
 | `KC_VIDEO_MIN_SECONDS` | `300` | Minimum 16:9 video duration (5 min) |
 | `KC_VIDEO_MAX_SECONDS` | `600` | Maximum 16:9 video duration (10 min) |
 | `KC_MAX_CLIPS_PER_JOB` | `12` | Max short candidates per VOD |
 | `KC_MAX_VIDEOS_PER_JOB` | `3` | Max video candidates per VOD |
 | `KC_LLM_MAX_CANDIDATES` | `24` | Candidate windows sent to the LLM |
+| `KC_CHAT_SIGNAL` | `true` | Use the VOD chat rate as a signal |
+| `KC_CHAT_MAX_REQUESTS` | `400` | Request cap when reading a VOD's chat |
+| `KC_CHAT_LAG_SECONDS` | `6` | Typical chat delay after the moment |
+| `KC_CAPTION_STYLE` | `viral` | `viral`, `karaoke`, `clean` or `none` |
+| `KC_SUBTITLE_FONT` | (bundled) | Force another caption font |
+| `KC_JUMPCUT` | `true` | Remove pauses in shorts |
+| `KC_JUMPCUT_MIN_GAP` | `0.7` | Pauses longer than this (s) get shortened |
+| `KC_LOUDNORM` | `true` | Normalize audio to −14 LUFS |
+| `KC_FACE_DETECTION` | `true` | Detect faces to choose the framing |
+| `KC_OUTPUT_FPS` | `30` | Output frame rate |
 | `KC_STREAMER_SOCIALS` | `{}` | Per-channel social links (JSON) added to descriptions |
 | `KC_PORT` | `8420` | Web server port |
 
@@ -140,22 +232,43 @@ KC_STREAMER_SOCIALS='{"somechannel": {"Kick": "https://kick.com/somechannel", "I
 ## Project layout
 
 ```
-kickclipper/
-├── server.py            # FastAPI: REST API + SSE + frontend
-├── config.py            # Settings (KC_* env vars)
-├── db.py                # SQLite (jobs & clips)
-├── events.py            # Event bus → SSE
-├── streamers.py         # Kick URLs, formats, social links
+kickclipper/                 # desktop version
+├── server.py                # FastAPI: REST API + SSE + frontend
+├── config.py                # Settings (KC_* env vars)
+├── db.py                    # SQLite (jobs & clips)
 ├── pipeline/
-│   ├── runner.py        # Pipeline orchestrator
-│   ├── downloader.py    # yt-dlp + audio extraction
-│   ├── transcriber.py   # Whisper (MLX / faster-whisper)
-│   ├── audio_analysis.py# Excitement curve
-│   ├── highlights.py    # Heuristics + LLM (Ollama)
-│   ├── subtitles.py     # ASS karaoke subtitles
-│   └── renderer.py      # ffmpeg 9:16 / 16:9 + VideoToolbox
-└── web/                 # UI (vanilla JS, no build step)
+│   ├── runner.py            # Pipeline orchestrator
+│   ├── downloader.py        # yt-dlp + audio extraction
+│   ├── transcriber.py       # Whisper (MLX / faster-whisper) + hallucination filter
+│   ├── audio_analysis.py    # Streaming audio curves
+│   ├── chat.py              # VOD chat rate
+│   ├── signals.py           # Baselines, peaks, smoothing
+│   ├── highlights.py        # Peak candidates + heuristics + LLM
+│   ├── vision.py            # Faces, facecam, active speaker → framing plan
+│   ├── timeline.py          # Jump cuts and cold open
+│   ├── subtitles.py         # ASS captions (viral, karaoke, clean)
+│   └── renderer.py          # ffmpeg graphs per layout, −14 LUFS
+├── assets/fonts/            # Anton and Poppins (OFL)
+└── web/                     # Local UI (vanilla JS, no build step)
+
+webapp/                      # web version (static, runs in the browser)
+├── index.html, styles.css
+├── js/                      # source, audio, chat, transcribe, highlights,
+│                            # vision, timeline, captions, compositor, render…
+└── tests/                   # node --test + Playwright end-to-end test
+
+docs/GUIA_CLIPS_VIRALES.md   # research: platforms, hooks, captions…
 ```
+
+## Tests
+
+```bash
+uv run pytest -q                         # desktop version (uses real ffmpeg)
+node --test webapp/tests/*.test.mjs      # web version modules
+```
+
+The web end-to-end test (Chromium + Playwright) lives in
+`webapp/tests/e2e.mjs`; see the header of that file for its variables.
 
 ## Contributing
 
@@ -164,4 +277,5 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 [MIT](LICENSE). Use it only with content you have the rights or the creator's
-permission to republish.
+permission to republish. The bundled fonts (Anton, Poppins) are licensed under
+the [SIL OFL 1.1](kickclipper/assets/fonts/).

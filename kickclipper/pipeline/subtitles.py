@@ -207,13 +207,19 @@ def _clean_events(words, cx, cy) -> list[str]:
 
 def _hook_event(hook: str, end_t: float, w: int, h: int, fmt: str,
                 hook_y: float | None = None) -> str:
-    text = _esc(" ".join(hook.replace("\n", " ").split())).upper()
-    text = _two_lines(text, 20 if fmt != "video" else 34)
+    words = _esc(" ".join(hook.replace("\n", " ").split())).upper().split()
+    max_chars = 20 if fmt != "video" else 34
+    lines = _wrap(words, max_chars, max_lines=3)
+    # si alguna línea sigue siendo larga (palabras enormes), se reduce la letra
+    longest = max((len(x) for x in lines), default=0)
+    size = h * (0.033 if fmt != "video" else 0.046)
+    fs = "" if longest <= max_chars else f"\\fs{int(size * max_chars / longest)}"
+    text = "\\N".join(lines)
     if hook_y is not None:
         y = int(h * hook_y)
     else:
         y = int(h * (SAFE_TOP + 0.01)) if fmt != "video" else int(h * 0.07)
-    anim = "\\fad(120,220)\\fscx88\\fscy88\\t(0,140,\\fscx100\\fscy100)"
+    anim = f"\\fad(120,220)\\fscx88\\fscy88\\t(0,140,\\fscx100\\fscy100){fs}"
     return (f"Dialogue: 2,{_ts(0)},{_ts(max(end_t, 0.5))},Hook,,0,0,0,,"
             f"{{\\an8\\pos({w // 2},{y}){anim}}}{text}\n")
 
@@ -242,6 +248,22 @@ def _cards(words: list[dict], *, max_words: int, max_chars: int, max_secs: float
     if cur:
         cards.append(cur)
     return cards
+
+
+def _wrap(words: list[str], max_chars: int, max_lines: int = 3) -> list[str]:
+    """Reparto voraz de palabras en líneas (la última se lleva el resto)."""
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        nxt = f"{cur} {w}" if cur else w
+        if cur and len(nxt) > max_chars and len(lines) < max_lines - 1:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = nxt
+    if cur:
+        lines.append(cur)
+    return lines
 
 
 def _two_lines(text: str, max_line: int) -> str:

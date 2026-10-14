@@ -18,11 +18,26 @@ Requirements: Python ≥ 3.12, [uv](https://docs.astral.sh/uv/), and
 `./run.sh restart` restarts the server after code changes. The frontend is
 plain HTML/CSS/JS in `kickclipper/web/` — no build step, just reload the page.
 
+The browser-only version lives in `webapp/` (also no build step). Serve it with
+`python3 -m http.server -d webapp 8000` and open `http://localhost:8000`.
+
+Run the tests before opening a PR:
+
+```bash
+uv run pytest -q                      # desktop pipeline (renders with real ffmpeg)
+node --test webapp/tests/*.test.mjs   # web modules
+```
+
 ## Guidelines
 
 - **Keep it local.** The core promise of the project is that nothing leaves
-  the user's machine except the VOD download. Don't add cloud APIs or
-  telemetry.
+  the user's machine except the VOD download (and its chat). Don't add cloud
+  APIs or telemetry. The web version must keep doing all processing in the
+  browser: the site is static, with no backend.
+- **Keep both versions in sync.** The selection, framing and caption logic
+  exists in Python (`kickclipper/pipeline/`) and in JS (`webapp/js/`) with the
+  same formulas; if you change one, port the change and its test.
+- **Pin web dependencies.** CDN imports in `webapp/` use exact versions.
 - **Keep it dependency-light.** The UI is vanilla JS on purpose; the backend
   sticks to FastAPI + SQLite.
 - **Match the existing style.** Code comments and UI copy are in Spanish;
