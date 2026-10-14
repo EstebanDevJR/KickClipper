@@ -12,7 +12,7 @@ export { cleanSegments, toSegments };
 
 export const MODELS = {
   base: { id: "onnx-community/whisper-base_timestamped", label: "Whisper base (rápido, ~150 MB)" },
-  turbo: { id: "onnx-community/whisper-large-v3-turbo_timestamped", label: "Whisper large-v3-turbo (preciso, ~1 GB, requiere WebGPU)" },
+  turbo: { id: "onnx-community/whisper-large-v3-turbo_timestamped", label: "Whisper large-v3-turbo (más preciso, ~1 GB, WebGPU; experimental)" },
 };
 
 let worker = null;

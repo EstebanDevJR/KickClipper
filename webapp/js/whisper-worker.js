@@ -11,17 +11,28 @@ async function load({ model, device }) {
   if (asr && loadedKey === key) return asr;
   const { pipeline, env } = await import(TRANSFORMERS_URL);
   env.allowLocalModels = false;
-  const dtype = device === "webgpu"
-    ? { encoder_model: "fp32", decoder_model_merged: "q4" }
-    : "q8";
   const progress = (p) => {
     if (p.status === "progress" && p.total) {
       postMessage({ type: "load", file: p.file, progress: p.loaded / p.total });
     }
   };
-  asr = await pipeline("automatic-speech-recognition", model, { device, dtype, progress_callback: progress });
-  loadedKey = key;
-  return asr;
+  // De más rápido a más compatible: si una variante cuantizada no existe o
+  // WebGPU falla en este equipo, se prueba la siguiente.
+  const attempts = device === "webgpu"
+    ? [["webgpu", { encoder_model: "fp32", decoder_model_merged: "q4" }], ["webgpu", "fp32"], ["wasm", "q8"], ["wasm", "fp32"]]
+    : [["wasm", "q8"], ["wasm", "fp32"]];
+  let lastErr = null;
+  for (const [dev, dtype] of attempts) {
+    try {
+      asr = await pipeline("automatic-speech-recognition", model, { device: dev, dtype, progress_callback: progress });
+      loadedKey = key;
+      return asr;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`Whisper (${dev}, ${JSON.stringify(dtype)}) no cargó:`, err?.message || err);
+    }
+  }
+  throw lastErr;
 }
 
 self.onmessage = async (e) => {
