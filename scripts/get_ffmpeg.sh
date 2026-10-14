@@ -16,19 +16,24 @@ case "$OS-$ARCH" in
   *) echo "Plataforma no soportada: $OS-$ARCH. Instala ffmpeg con libass manualmente."; exit 1 ;;
 esac
 
-echo "Descargando ffmpeg estático para $OS-$ARCH…"
+echo "Descargando ffmpeg estático para ${OS}-${ARCH}…"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+mkdir -p "$TMP/x"
 if [[ "$URL" == *.zip ]]; then
-  curl -L --progress-bar -o "$TMP/ffmpeg.zip" "$URL"
-  unzip -o -q "$TMP/ffmpeg.zip" -d "$TMP"
-  mv "$TMP/ffmpeg" bin/ffmpeg
+  curl -fL --progress-bar -o "$TMP/ffmpeg.zip" "$URL"
+  unzip -o -q "$TMP/ffmpeg.zip" -d "$TMP/x"
 else
-  curl -L --progress-bar -o "$TMP/ffmpeg.tar.xz" "$URL"
-  tar -xf "$TMP/ffmpeg.tar.xz" -C "$TMP" --strip-components=1
-  mv "$TMP/ffmpeg" bin/ffmpeg
+  curl -fL --progress-bar -o "$TMP/ffmpeg.tar.xz" "$URL"
+  tar -xf "$TMP/ffmpeg.tar.xz" -C "$TMP/x"
 fi
+# el binario puede venir en la raíz o en una subcarpeta según el build
+BIN="$(find "$TMP/x" -type f -name ffmpeg | head -n 1)"
+if [[ -z "$BIN" ]]; then
+  echo "El archivo descargado no contiene ffmpeg"; exit 1
+fi
+mv "$BIN" bin/ffmpeg
 
 chmod +x bin/ffmpeg
 echo "Listo: $(./bin/ffmpeg -version | head -1)"
