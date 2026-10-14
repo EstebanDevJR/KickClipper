@@ -21,6 +21,7 @@ import platform
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -96,20 +97,24 @@ def render_clip(
     ]
 
     log.info("Renderizando %s (%.1fs, layout %s)", out.name, out_dur, layout)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", cwd=workdir)
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        m = re.match(r"out_time_us=(\d+)", line.strip()) or re.match(r"out_time_ms=(\d+)", line.strip())
-        if m and on_progress:
-            done = int(m.group(1)) / 1_000_000
-            on_progress(min(done / max(out_dur, 0.1), 0.999), "Renderizando")
-    proc.wait()
-    if ass_name:
-        (workdir / ass_name).unlink(missing_ok=True)  # archivo intermedio
-    if proc.returncode != 0:
-        err = proc.stderr.read() if proc.stderr else ""
-        raise RuntimeError(f"ffmpeg falló ({proc.returncode}): {err[-2000:]}")
+    # stderr va a un archivo temporal: si fuera una tubería que solo se lee al
+    # final, ffmpeg la llena (en Windows el búfer es de pocos KB) y se bloquea.
+    with tempfile.TemporaryFile() as errf:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
+                                text=True, encoding="utf-8", errors="replace", cwd=workdir)
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            m = re.match(r"out_time_us=(\d+)", line.strip()) or re.match(r"out_time_ms=(\d+)", line.strip())
+            if m and on_progress:
+                done = int(m.group(1)) / 1_000_000
+                on_progress(min(done / max(out_dur, 0.1), 0.999), "Renderizando")
+        proc.wait()
+        if ass_name:
+            (workdir / ass_name).unlink(missing_ok=True)  # archivo intermedio
+        if proc.returncode != 0:
+            errf.seek(0)
+            err = errf.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"ffmpeg falló ({proc.returncode}): {err[-2000:]}")
     if on_progress:
         on_progress(1.0, "Clip renderizado")
     return out

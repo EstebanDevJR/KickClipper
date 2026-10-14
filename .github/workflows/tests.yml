@@ -50,7 +50,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
       - run: uv sync
-      - run: uv run pytest -q
+      - name: pytest
+        timeout-minutes: 15
+        run: uv run pytest -v --durations=10
 
       # Arranque real del servidor con el lanzador de cada sistema
       - name: Arranque con run.sh

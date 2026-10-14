@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,21 +59,24 @@ def _iter_blocks(wav: Path, start: float | None = None, duration: float | None =
     if duration is not None:
         cmd += ["-t", f"{duration:.3f}"]
     cmd += ["-i", str(wav), "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert proc.stdout is not None
-    block_bytes = SR * _BLOCK_SECONDS * 4
-    try:
-        while True:
-            raw = proc.stdout.read(block_bytes)
-            if not raw:
-                break
-            yield np.frombuffer(raw[: len(raw) // 4 * 4], dtype=np.float32)
-    finally:
-        proc.stdout.close()
-        proc.wait()
-        if proc.returncode not in (0, None):
-            err = proc.stderr.read().decode(errors="ignore") if proc.stderr else ""
-            raise RuntimeError(f"ffmpeg no pudo leer el audio: {err[-500:]}")
+    # stderr a un archivo temporal para no bloquear a ffmpeg (ver renderer.py)
+    with tempfile.TemporaryFile() as errf:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+        assert proc.stdout is not None
+        block_bytes = SR * _BLOCK_SECONDS * 4
+        try:
+            while True:
+                raw = proc.stdout.read(block_bytes)
+                if not raw:
+                    break
+                yield np.frombuffer(raw[: len(raw) // 4 * 4], dtype=np.float32)
+        finally:
+            proc.stdout.close()
+            proc.wait()
+            if proc.returncode not in (0, None):
+                errf.seek(0)
+                err = errf.read().decode(errors="ignore")
+                raise RuntimeError(f"ffmpeg no pudo leer el audio: {err[-500:]}")
 
 
 def load_pcm(wav: Path, start: float | None = None, duration: float | None = None) -> np.ndarray:
