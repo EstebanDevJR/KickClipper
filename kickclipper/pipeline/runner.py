@@ -18,7 +18,8 @@ import unicodedata
 from .. import db, streamers
 from ..config import settings
 from ..events import bus
-from . import audio_analysis, downloader, highlights, renderer, transcriber
+from . import (audio_analysis, chat, downloader, highlights, renderer, subtitles,
+               timeline, transcriber, vision)
 
 log = logging.getLogger(__name__)
 
@@ -104,36 +105,56 @@ def _run_job(job_id: str) -> None:
                  duration=meta["duration"], thumbnail=meta["thumbnail"])
         except Exception:
             log.warning("No se pudieron obtener metadatos de %s", job["url"])
+        job = db.get_job(job_id) or job
+
+        # 1b. Chat del VOD en segundo plano (mientras se descarga y transcribe)
+        sections = options.get("sections") or None
+        chat_box: dict = {}
+        chat_thread = _start_chat(job_id, job, sections, chat_box)
 
         source = downloader.download(
             job["url"], workdir,
             on_progress=_progress(job_id, "downloading"),
-            sections=options.get("sections") or None,
+            sections=sections,
         )
         _check_cancel(job_id)
 
-        # 2. Audio + transcripción
+        # 2. Audio + transcripción (se reutiliza si ya existe: reintentos baratos)
         _set(job_id, status="transcribing", stage_progress=0)
         wav = downloader.extract_audio(source)
-        segments = transcriber.transcribe(wav, _progress(job_id, "transcribing"))
-        (workdir / "transcript.json").write_text(
-            json.dumps(segments, ensure_ascii=False), encoding="utf-8"
-        )
+        transcript = workdir / "transcript.json"
+        if transcript.exists():
+            segments = json.loads(transcript.read_text(encoding="utf-8"))
+        else:
+            segments = transcriber.transcribe(wav, _progress(job_id, "transcribing"))
+            transcript.write_text(json.dumps(segments, ensure_ascii=False), encoding="utf-8")
         if not segments:
             raise RuntimeError("La transcripción no produjo texto (¿VOD sin voz?)")
         _check_cancel(job_id)
 
-        # 3. Análisis de audio
-        _set(job_id, status="analyzing", stage_progress=0.5)
-        excitement = audio_analysis.excitement_curve(wav)
+        # 3. Análisis de audio (+ chat)
+        _set(job_id, status="analyzing", stage_progress=0.2)
+        feats_path = workdir / "features.npz"
+        try:
+            features = audio_analysis.AudioFeatures.load(feats_path)
+        except Exception:
+            features = audio_analysis.analyze(wav)
+            features.save(feats_path)
+        excitement = features.excitement
+        _set(job_id, status="analyzing", stage_progress=0.7)
+        if chat_thread is not None:
+            chat_thread.join(timeout=600)
+        chat_curve = chat.spike_curve(chat_box.get("data"), len(excitement))
+        if chat_curve is not None:
+            log.info("Señal de chat disponible para el job %s", job_id)
         _check_cancel(job_id)
 
         # 4. Selección de highlights (heurística + LLM)
         _set(job_id, status="scoring", stage_progress=0)
-        duration = job.get("duration") or segments[-1]["end"]
+        duration = segments[-1]["end"] if sections else (job.get("duration") or segments[-1]["end"])
         candidates = highlights.detect(
             segments, excitement, duration, _progress(job_id, "scoring"),
-            formats=formats,
+            formats=formats, chat=chat_curve, channel=channel,
         )
         if not candidates:
             raise RuntimeError("No se encontraron momentos clipeables")
@@ -159,6 +180,15 @@ def _run_job(job_id: str) -> None:
                 words=words,
                 # los videos largos no llevan subtítulos por defecto
                 render_options={"format": fmt, "subtitles": fmt != "video"},
+                meta={
+                    "hook_text": c.get("hook_text", ""),
+                    "keywords": c.get("keywords", []),
+                    "category": c.get("category", ""),
+                    "peak": c.get("peak"),
+                    "signals": c.get("signals", {}),
+                    "llm_scores": c.get("llm_scores", {}),
+                    "chat": chat_curve is not None,
+                },
             )
             clip_rows.append(clip)
         bus.publish({"type": "clips", "job_id": job_id, "clips": clip_rows})
@@ -166,11 +196,10 @@ def _run_job(job_id: str) -> None:
         # Miniaturas de los candidatos (baratas, mejoran mucho la UI)
         (workdir / "clips").mkdir(exist_ok=True)
         for clip in clip_rows:
+            peak = (clip.get("meta") or {}).get("peak")
+            at = peak if peak and clip["start"] < peak < clip["end"] else (clip["start"] + clip["end"]) / 2
             try:
-                renderer.thumbnail(
-                    source, (clip["start"] + clip["end"]) / 2,
-                    workdir / "clips" / f"{clip['id']}.jpg",
-                )
+                renderer.thumbnail(source, at, workdir / "clips" / f"{clip['id']}.jpg")
             except Exception:
                 pass
 
@@ -192,6 +221,34 @@ def _run_job(job_id: str) -> None:
         _set(job_id, status="cancelled")
 
 
+def _start_chat(job_id: str, job: dict, sections: str | None,
+                box: dict) -> threading.Thread | None:
+    """Lee el chat del VOD en un hilo aparte; nunca hace fallar el job."""
+    if not settings.chat_signal or not chat.vod_uuid(job["url"]):
+        return None
+    offset, length = 0.0, float(job.get("duration") or 0)
+    if sections:
+        start, end = downloader._parse_section(sections)
+        offset = start
+        if end != float("inf"):
+            length = end - start
+        elif length:
+            length -= start
+    if length <= 0:
+        return None
+
+    def work() -> None:
+        try:
+            box["data"] = chat.activity(job["url"], length, offset,
+                                        cancelled=lambda: job_id in _cancelled)
+        except Exception:
+            log.exception("Lectura del chat falló")
+
+    th = threading.Thread(target=work, daemon=True, name=f"kc-chat-{job_id}")
+    th.start()
+    return th
+
+
 def render_clip(clip_id: str, overrides: dict | None = None) -> dict:
     """Renderiza (o re-renderiza) un clip; usable desde el worker o la API."""
     clip = db.get_clip(clip_id)
@@ -211,33 +268,101 @@ def render_clip(clip_id: str, overrides: dict | None = None) -> dict:
         raise ValueError("No se pudo determinar el canal del job")
 
     o = {**(clip.get("render_options") or {}), **(overrides or {})}
+    meta = clip.get("meta") or {}
     fmt = o.get("format", "short")
     streamers.validate_format(fmt)
     start = float(o.get("start", clip["start"]))
     end = float(o.get("end", clip["end"]))
     _validate_duration(fmt, end - start)
     title = o.get("title", clip["title"])
-    layout = o.get("layout", "blur")
+    # Texto gancho de los primeros segundos (en clips antiguos, el título)
+    hook_text = o.get("hook_text") or meta.get("hook_text") or (title if fmt == "short" else "")
+    show_hook = o.get("show_hook", o.get("show_title", fmt == "short"))
     # los subtítulos no son necesarios en los videos; en shorts sí por defecto
     use_subs = o.get("subtitles", fmt != "video")
+    style = o.get("caption_style") or subtitles.default_style(fmt)
+    if not use_subs:
+        style = "none"
+    layout = o.get("layout") or ("auto" if fmt == "short" else "fit")
+    if layout not in renderer.LAYOUTS and layout != "fit":
+        raise ValueError(f"Layout desconocido: {layout}")
+    jumpcut = bool(o.get("jumpcut", settings.jumpcut)) and fmt == "short"
+    hook_preview = bool(o.get("hook_preview", False)) and fmt == "short"
 
     db.update_clip(clip_id, status="rendering", render_options=o)
     bus.publish({"type": "clip", "clip": db.get_clip(clip_id)})
 
     tmp_out = workdir / "clips" / f"{clip_id}.mp4"
     tmp_out.parent.mkdir(exist_ok=True)
-    words = clip.get("words") or []
+    clip_len = end - start
+    words = [
+        {"w": w["w"], "s": max(w["s"] - start, 0.0), "e": min(w["e"] - start, clip_len)}
+        for w in (clip.get("words") or [])
+        if w["e"] > start and w["s"] < end
+    ]
 
     def on_p(frac: float, msg: str) -> None:
         bus.publish({"type": "clip_progress", "clip_id": clip_id,
                      "progress": frac, "message": msg})
 
     try:
+        # Encuadre: análisis de caras (se cachea por rango del clip)
+        plan: dict = {}
+        resolved = layout
+        cam_rect = o.get("cam_rect")
+        if fmt == "short" and cam_rect and layout in ("auto", "split"):
+            # cámara marcada a mano: manda sobre la detección automática
+            size = vision.probe_size(source) or (1920, 1080)
+            plan = vision.split_from_rect(cam_rect, *size)
+            resolved = "split"
+        elif fmt == "short" and layout in ("auto", "split", "speaker", "follow"):
+            cached = o.get("_plan") if o.get("_plan_range") == [start, end] else None
+            if cached is None:
+                on_p(0.0, "Analizando encuadre (caras)")
+                try:
+                    cached = vision.plan(vision.analyze(source, start, end), words, clip_len)
+                except Exception:
+                    log.exception("Análisis visual falló; se usa fondo difuminado")
+                    cached = {"layout": "blur"}
+                o["_plan"], o["_plan_range"] = cached, [start, end]
+            plan = cached
+            if layout == "auto":
+                resolved = plan.get("layout", "blur")
+            elif layout != plan.get("layout"):
+                log.info("Layout %s pedido pero no detectado (%s): fondo difuminado",
+                         layout, plan.get("layout"))
+                resolved = "blur"
+        o["layout_used"] = resolved
+
+        # Línea de tiempo: jump cuts y cold open
+        energy = None
+        wav = workdir / "audio.wav"
+        if jumpcut and wav.exists():
+            try:
+                energy = audio_analysis.fine_energy(wav, start, end)
+            except Exception:
+                log.warning("No se pudo medir la energía fina; jump cuts solo por voz")
+        preview = None
+        peak = meta.get("peak")
+        if hook_preview and peak is not None and 6.0 < peak - start < clip_len - 1.0:
+            p = peak - start
+            preview = (p - 1.4, p + 0.9)
+        tl = timeline.build(clip_len, words, energy, jumpcut=jumpcut,
+                            min_gap=settings.jumpcut_min_gap, preview=preview)
+
+        # Hablante de cada palabra (colores) y encuadre en tiempo de salida
+        if resolved == "speaker":
+            for w in words:
+                w["spk"] = vision.speaker_at(plan, (w["s"] + w["e"]) / 2)
+        out_plan = _plan_to_output(plan, resolved, tl)
+
         renderer.render_clip(
-            source, start, end,
-            words if use_subs else [],
-            title if o.get("show_title", True) else "",
-            tmp_out, on_p, layout=layout, fmt=fmt,
+            source, start, end, tmp_out,
+            fmt=fmt, layout=resolved, plan=out_plan, timeline=tl,
+            words=tl.map_words(words) if style != "none" else [],
+            hook=hook_text if show_hook else "",
+            caption_style=style, keywords=meta.get("keywords") or [],
+            on_progress=on_p,
         )
         renderer.thumbnail(source, (start + end) / 2, tmp_out.with_suffix(".jpg"))
         final = _export(tmp_out, channel, fmt, title or clip["transcript"][:50], clip_id)
@@ -246,7 +371,7 @@ def render_clip(clip_id: str, overrides: dict | None = None) -> dict:
             publish_text(channel, title, clip), encoding="utf-8"
         )
         db.update_clip(clip_id, status="rendered", file=str(final),
-                       start=start, end=end, title=title)
+                       start=start, end=end, title=title, render_options=o)
     except Exception:
         db.update_clip(clip_id, status="error")
         bus.publish({"type": "clip", "clip": db.get_clip(clip_id)})
@@ -254,6 +379,31 @@ def render_clip(clip_id: str, overrides: dict | None = None) -> dict:
     updated = db.get_clip(clip_id)
     bus.publish({"type": "clip", "clip": updated})
     return updated
+
+
+def _plan_to_output(plan: dict, layout: str, tl: timeline.Timeline) -> dict:
+    """Traduce los tiempos del plan de encuadre a la línea de tiempo de salida."""
+    if layout == "speaker":
+        shots = tl.map_spans(plan.get("shots") or [])
+        merged: list[dict] = []
+        for sh in shots:
+            if (merged and abs(merged[-1]["t1"] - sh["t0"]) < 1e-3
+                    and merged[-1]["mode"] == sh["mode"]
+                    and merged[-1].get("rect") == sh.get("rect")
+                    and merged[-1].get("rects") == sh.get("rects")):
+                merged[-1]["t1"] = sh["t1"]
+            else:
+                merged.append(dict(sh))
+        return {**plan, "shots": merged}
+    if layout == "follow" and plan.get("keys"):
+        keys = []
+        for k in plan["keys"]:
+            ts = tl.map_time(k["t"])
+            if ts:
+                keys.append({**k, "t": ts[-1]})
+        keys.sort(key=lambda k: k["t"])
+        return {**plan, "keys": keys}
+    return plan
 
 
 def publish_text(channel: str, title: str, clip: dict) -> str:

@@ -36,8 +36,14 @@ async function refreshStatus() {
   try {
     const s = await api("/status");
     setLed("gear-ffmpeg", s.ffmpeg);
+    const ENC = { libx264: "CPU", h264_nvenc: "GPU NVIDIA", h264_qsv: "GPU Intel", h264_amf: "GPU AMD", h264_videotoolbox: "GPU Apple" };
+    $("ffmpeg-detail").textContent = s.video_encoder ? `render · ${ENC[s.video_encoder] || s.video_encoder}` : "no encontrado — ver README";
     setLed("gear-whisper", true);
     setLed("gear-ollama", s.ollama);
+    setLed("gear-vision", s.vision);
+    setLed("gear-chat", s.chat_signal);
+    $("vision-detail").textContent = s.vision ? "facecam · hablante activo" : "instala opencv-python-headless";
+    $("chat-detail").textContent = s.chat_signal ? "picos de mensajes" : "desactivado (KC_CHAT_SIGNAL)";
     $("whisper-detail").textContent = `${s.whisper_engine} · ${s.whisper_model}`;
     $("ollama-detail").textContent = s.ollama
       ? s.ollama_model : "servidor apagado — ejecuta `ollama serve`";
@@ -178,18 +184,111 @@ function publishDesc(clip, channel) {
   return parts.join("\n\n");
 }
 
+const LAYOUT_LABEL = {
+  split: "cámara + gameplay", speaker: "foco en quien habla", follow: "sigue a la persona",
+  blur: "fondo difuminado", crop: "recorte central",
+};
+const SIGNAL_LABEL = { audio: "audio", chat: "chat", hook: "gancho", reactions: "reacciones", density: "habla" };
+
+function renderSignals(clip) {
+  const meta = clip.meta || {};
+  const sig = meta.signals || {};
+  const bars = Object.entries(SIGNAL_LABEL)
+    .filter(([k]) => typeof sig[k] === "number")
+    .map(([k, label]) => `<div class="sig"><span>${label}</span><i style="--v:${Math.round(sig[k] * 100)}%"></i></div>`)
+    .join("");
+  const chips = [];
+  if (meta.category) chips.push(`<span class="chip">${esc(meta.category)}</span>`);
+  const used = clip.render_options?.layout_used;
+  if (used) chips.push(`<span class="chip">encuadre: ${esc(LAYOUT_LABEL[used] || used)}</span>`);
+  if (meta.llm_scores?.hook !== undefined) {
+    const l = meta.llm_scores;
+    chips.push(`<span class="chip">IA · gancho ${l.hook} · se entiende ${l.standalone} · remate ${l.payoff}</span>`);
+  }
+  $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
+}
+
+/* ---------------- cámara marcada a mano ---------------- */
+
+let modalCam = null;  // [x, y, w, h] normalizado, null = detección automática
+
+/** Abre el selector sobre una imagen y resuelve con el rectángulo (o null). */
+function pickRect(imgSrc) {
+  return new Promise((resolve) => {
+    const picker = $("cam-picker"), stage = $("cam-stage"), img = $("cam-img"), sel = $("cam-sel");
+    picker.hidden = false;
+    sel.hidden = true;
+    img.src = imgSrc;
+    let start = null, rect = null;
+    const clamp = (v) => Math.min(Math.max(v, 0), 1);
+    const pos = (e) => {
+      const b = img.getBoundingClientRect();
+      return [clamp((e.clientX - b.left) / b.width), clamp((e.clientY - b.top) / b.height)];
+    };
+    const draw = () => {
+      sel.hidden = false;
+      Object.assign(sel.style, { left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` });
+    };
+    const down = (e) => { e.preventDefault(); start = pos(e); rect = [start[0], start[1], 0, 0]; stage.setPointerCapture(e.pointerId); };
+    const move = (e) => {
+      if (!start) return;
+      const p = pos(e);
+      rect = [Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.abs(p[0] - start[0]), Math.abs(p[1] - start[1])];
+      draw();
+    };
+    const up = () => { start = null; };
+    const finish = (value) => {
+      stage.removeEventListener("pointerdown", down);
+      stage.removeEventListener("pointermove", move);
+      stage.removeEventListener("pointerup", up);
+      $("cam-ok").onclick = $("cam-cancel").onclick = null;
+      picker.hidden = true;
+      resolve(value);
+    };
+    stage.addEventListener("pointerdown", down);
+    stage.addEventListener("pointermove", move);
+    stage.addEventListener("pointerup", up);
+    $("cam-ok").onclick = () => finish(rect && rect[2] > 0.02 && rect[3] > 0.02 ? rect.map((v) => Math.round(v * 1e4) / 1e4) : null);
+    $("cam-cancel").onclick = () => finish(undefined);
+  });
+}
+
+function showCamState() {
+  $("m-cam-state").textContent = modalCam ? "cámara marcada a mano ✓" : "cámara: detección automática";
+  $("m-cam-clear").hidden = !modalCam;
+}
+
+$("m-cam-btn").addEventListener("click", async () => {
+  if (!modalClip) return;
+  const t = (parseFloat($("m-start").value) + parseFloat($("m-end").value)) / 2;
+  const rect = await pickRect(`/api/clips/${modalClip.id}/frame?t=${t.toFixed(2)}&_=${Date.now()}`);
+  if (rect === undefined) return;  // cancelado
+  modalCam = rect;
+  if (rect) $("m-layout").value = "split";
+  showCamState();
+});
+$("m-cam-clear").addEventListener("click", () => { modalCam = null; showCamState(); });
+
 function openModal(clip) {
   modalClip = clip;
+  modalCam = clip.render_options?.cam_rect || null;
+  showCamState();
+  const ro = clip.render_options || {};
+  const fmt = ro.format || "short";
   $("m-title").value = clip.title || "";
+  $("m-hook").value = ro.hook_text || clip.meta?.hook_text || "";
   $("m-start").value = clip.start;
   $("m-end").value = clip.end;
-  $("m-layout").value = clip.render_options?.layout || "blur";
+  $("m-layout").value = ro.layout || "auto";
 
   const job = jobs.find((j) => j.id === clip.job_id);
-  $("m-format").value = clip.render_options?.format || "short";
-  $("m-subs").checked = clip.render_options?.subtitles !== false;
-  $("m-showtitle").checked = clip.render_options?.show_title !== false;
+  $("m-format").value = fmt;
+  $("m-capstyle").value = ro.subtitles === false ? "none" : (ro.caption_style || (fmt === "video" ? "clean" : "viral"));
+  $("m-showtitle").checked = (ro.show_hook ?? ro.show_title ?? fmt === "short") !== false;
+  $("m-jumpcut").checked = ro.jumpcut !== false && fmt === "short";
+  $("m-preview").checked = !!ro.hook_preview;
   $("m-desc").value = publishDesc(clip, channelOf(job));
+  renderSignals(clip);
   $("m-reason").textContent = clip.reason || "";
   $("m-tags").innerHTML = (clip.hashtags || []).map((h) => `<span>#${esc(h)}</span>`).join("");
   $("m-progress").hidden = true;
@@ -223,7 +322,10 @@ function closeModal() {
 $("modal-close").addEventListener("click", closeModal);
 // En videos los subtítulos no son necesarios; en shorts sí por defecto
 $("m-format").addEventListener("change", () => {
-  $("m-subs").checked = $("m-format").value !== "video";
+  const video = $("m-format").value === "video";
+  $("m-capstyle").value = video ? "none" : "viral";
+  $("m-jumpcut").checked = !video;
+  $("m-showtitle").checked = !video;
 });
 
 async function copyToClipboard(btn, text) {
@@ -248,16 +350,21 @@ $("m-render").addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({
         title: $("m-title").value,
+        hook_text: $("m-hook").value.trim(),
         start: parseFloat($("m-start").value),
         end: parseFloat($("m-end").value),
         layout: $("m-layout").value,
         format: $("m-format").value,
-        subtitles: $("m-subs").checked,
-        show_title: $("m-showtitle").checked,
+        subtitles: $("m-capstyle").value !== "none",
+        caption_style: $("m-capstyle").value === "none" ? null : $("m-capstyle").value,
+        show_hook: $("m-showtitle").checked,
+        jumpcut: $("m-jumpcut").checked,
+        hook_preview: $("m-preview").checked,
+        ...(modalCam ? { cam_rect: modalCam } : { clear_cam: true }),
       }),
     });
     patchClip(updated);
-    if (modalClip && modalClip.id === updated.id) { modalClip = updated; updateModalVideo(updated); }
+    if (modalClip && modalClip.id === updated.id) { modalClip = updated; updateModalVideo(updated); renderSignals(updated); }
   } catch (err) {
     alert("Error al renderizar: " + err.message);
   } finally {

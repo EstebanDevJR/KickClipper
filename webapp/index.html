@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KickClipper Web</title>
+<meta name="description" content="Clips verticales virales de VODs de Kick. Todo se procesa en tu navegador: nada se sube a ningún servidor.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2300e701'/><text x='50' y='68' font-size='52' text-anchor='middle' font-family='Arial Black'>✂</text></svg>">
+<script type="importmap">
+{
+  "imports": {
+    "mediabunny": "https://cdn.jsdelivr.net/npm/mediabunny@1.60.0/dist/bundles/mediabunny.min.mjs",
+    "@mediabunny/aac-encoder": "https://cdn.jsdelivr.net/npm/@mediabunny/aac-encoder@1.60.0/dist/bundles/mediabunny-aac-encoder.min.mjs"
+  }
+}
+</script>
+</head>
+<body>
+<div class="noise"></div>
+
+<aside class="rack">
+  <div class="brand">
+    <div class="brand-mark">K<span>C</span></div>
+    <div class="brand-name">KICK<b>CLIPPER</b></div>
+    <div class="brand-sub">versión web · 100 % en tu equipo</div>
+  </div>
+
+  <div class="rack-section">
+    <div class="rack-label">// tu navegador</div>
+    <div class="gear" id="gear-webcodecs"><span class="led"></span><div><b>WebCodecs</b><i id="d-webcodecs">render de vídeo</i></div></div>
+    <div class="gear" id="gear-h264"><span class="led"></span><div><b>Salida</b><i id="d-h264">—</i></div></div>
+    <div class="gear" id="gear-webgpu"><span class="led"></span><div><b>WebGPU</b><i id="d-webgpu">IA acelerada</i></div></div>
+    <div class="gear" id="gear-ai"><span class="led"></span><div><b>IA local</b><i id="d-ai">opcional</i></div></div>
+  </div>
+
+  <div class="rack-section rack-privacy">
+    <div class="rack-label">// privacidad</div>
+    <p>El vídeo, la transcripción y los clips nunca salen de tu dispositivo. Esta web solo sirve archivos estáticos; los modelos de IA se descargan una vez y quedan en la caché del navegador.</p>
+  </div>
+
+  <div class="rack-section">
+    <div class="rack-label">// pipeline</div>
+    <ol class="pipe-legend">
+      <li><em>01</em> Abrir fuente</li>
+      <li><em>02</em> Hype: audio + chat</li>
+      <li><em>03</em> Transcripción (Whisper)</li>
+      <li><em>04</em> Selección (+ IA)</li>
+      <li><em>05</em> Encuadre y render</li>
+    </ol>
+  </div>
+
+  <div class="rack-foot">
+    <a href="https://github.com/EstebanDevJR/KickClipper" target="_blank" rel="noopener">código y versión de escritorio ↗</a>
+  </div>
+</aside>
+
+<main class="stage">
+  <header class="masthead">
+    <h1>CORTA EL <span class="hl">MOMENTO</span></h1>
+    <p>Encuentra los mejores momentos de un stream y conviértelos en shorts 9:16 con subtítulos, sin subir nada a ningún servidor.</p>
+  </header>
+
+  <div class="unsupported" id="unsupported" hidden></div>
+
+  <section class="console" id="source-panel">
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="file" role="tab">📁 Archivo</button>
+      <button class="tab" data-tab="kick" role="tab">⚡ VOD de Kick</button>
+      <button class="tab" data-tab="url" role="tab">🔗 URL</button>
+    </div>
+
+    <div class="tab-body" data-body="file">
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file-input" accept="video/*,.mkv,.ts,.m4v,.mov,.webm">
+        <b>Arrastra aquí el vídeo del stream</b>
+        <span>o haz clic para elegirlo · MP4, MKV, WebM, MOV, TS</span>
+        <em id="file-name"></em>
+      </label>
+    </div>
+
+    <div class="tab-body" data-body="kick" hidden>
+      <div class="kick-vod" id="kick-vod" hidden>
+        <img id="kick-thumb" alt="">
+        <div>
+          <b id="kick-title"></b>
+          <span id="kick-meta"></span>
+          <span class="kick-bridge" id="kick-bridge"></span>
+        </div>
+      </div>
+      <ol class="steps">
+        <li>Arrastra este botón a tu barra de marcadores: <a class="bookmarklet" id="bookmarklet" href="#" title="Arrástrame a la barra de marcadores">⚡ KickClipper</a></li>
+        <li>Abre el VOD en <b>kick.com</b> (<code>kick.com/canal/videos/…</code>).</li>
+        <li>Pulsa el marcador: se abrirá esta página con el VOD listo. Deja abierta la pestaña de Kick mientras se procesa (se usa para leer el vídeo y el chat).</li>
+      </ol>
+    </div>
+
+    <div class="tab-body" data-body="url" hidden>
+      <input type="url" class="url-input" id="url-input" placeholder="https://…/master.m3u8  o  https://…/video.mp4" spellcheck="false">
+      <p class="hint">El servidor del vídeo debe permitir peticiones desde otras webs (CORS). Para VODs de Kick usa la pestaña «VOD de Kick».</p>
+    </div>
+
+    <div class="console-opts">
+      <label class="opt"><span>Rango</span><input id="range-input" placeholder="01:00:00-01:30:00" pattern="^\d{1,2}:\d{2}(:\d{2})?-\d{1,2}:\d{2}(:\d{2})?$"></label>
+      <label class="opt"><span>Clips</span><select id="clips-input"><option value="4">4</option><option value="8" selected>8</option><option value="12">12</option></select></label>
+      <label class="opt"><span>Duración</span><select id="dur-input">
+        <option value="15-60" selected>15–60 s (alcance)</option>
+        <option value="61-90">61–90 s (monetiza en TikTok)</option>
+        <option value="20-180">hasta 3 min (Shorts / Reels)</option>
+      </select></label>
+      <label class="opt"><span>Idioma</span><select id="lang-input"><option value="">auto</option><option value="es">español</option><option value="en">inglés</option><option value="pt">portugués</option></select></label>
+      <label class="opt"><span>Transcripción</span><select id="whisper-input"></select></label>
+      <label class="opt"><span>Profundidad</span><select id="depth-input">
+        <option value="15">rápida (15 min de audio)</option>
+        <option value="30" selected>normal (30 min)</option>
+        <option value="90">a fondo (90 min)</option>
+      </select></label>
+      <label class="opt"><span>IA</span><select id="llm-input"><option value="">sin IA (señales)</option></select></label>
+      <label class="opt"><span>Auto-render</span><select id="autorender-input"><option value="0">ninguno</option><option value="1">el mejor</option><option value="3" selected>top 3</option></select></label>
+    </div>
+    <div class="console-row go-row">
+      <button class="btn-go" id="go-btn">CLIPEAR</button>
+      <span class="opt-hint">Usa solo contenido propio o con permiso del creador.</span>
+    </div>
+  </section>
+
+  <section class="run" id="run" hidden>
+    <div class="run-head">
+      <b id="run-title">Procesando</b>
+      <button class="btn-ghost" id="cancel-btn">⏹ cancelar</button>
+    </div>
+    <div class="job-pipe" id="run-pipe">
+      <div class="pipe-step" data-stage="open"><div class="fill"></div></div>
+      <div class="pipe-step" data-stage="audio"><div class="fill"></div></div>
+      <div class="pipe-step" data-stage="transcribe"><div class="fill"></div></div>
+      <div class="pipe-step" data-stage="select"><div class="fill"></div></div>
+      <div class="pipe-step" data-stage="render"><div class="fill"></div></div>
+    </div>
+    <div class="job-msg" id="run-msg"></div>
+    <canvas class="curve" id="curve" width="1200" height="90" hidden></canvas>
+  </section>
+
+  <section class="clips-zone" id="clips-zone" hidden>
+    <div class="zone-head">
+      <h2 id="clips-title">CLIPS DETECTADOS</h2>
+      <span class="zone-count" id="clips-count"></span>
+    </div>
+    <div class="clip-grid" id="clip-grid"></div>
+  </section>
+
+  <section class="info">
+    <details>
+      <summary>¿Cómo elige los momentos?</summary>
+      <p>Igual que hacen los clippers: busca picos de emoción en el audio (gritos, risas, cambios bruscos) comparados con lo que es normal en ese stream, y picos de velocidad del chat (que reacciona unos segundos después). Alrededor de esos picos transcribe la voz con Whisper y arma clips con la estructura <b>preparación → pico → reacción</b>, empezando en la frase con más gancho y terminando justo después del remate. Si activas la IA local, además puntúa el gancho, si se entiende sin contexto y el remate, y escribe el título y el texto gancho.</p>
+    </details>
+    <details>
+      <summary>¿Qué hace con el encuadre?</summary>
+      <p>Detecta caras: si hay una facecam pequeña en una esquina monta <b>cámara arriba + gameplay abajo</b>; si hay varias personas hablando, recorta sobre <b>quien habla</b> (mide el movimiento de la mandíbula) y pasa a pantalla dividida cuando hablan a la vez; si hay una sola persona en primer plano, la sigue. Si no hay caras, usa el vídeo completo sobre un fondo difuminado.</p>
+    </details>
+    <details>
+      <summary>Requisitos y límites</summary>
+      <p>Chrome o Edge recientes en ordenador (WebCodecs; WebGPU acelera mucho la IA). La primera vez descarga el modelo de transcripción (~150 MB, o ~1 GB el preciso) y, si la activas, la IA (~1 GB). Un VOD de varias horas se analiza en minutos porque solo se descarga la variante más ligera para el análisis y la calidad completa solo para los tramos que se renderizan. Para vídeos largos de 5–10 min usa la versión de escritorio.</p>
+    </details>
+  </section>
+</main>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-card">
+    <button class="modal-x" id="modal-close" aria-label="Cerrar">✕</button>
+    <div class="modal-cols">
+      <div class="modal-player">
+        <video id="modal-video" controls playsinline></video>
+        <div class="player-placeholder" id="player-placeholder">
+          <span>SIN RENDER</span>
+          <p>Renderiza el clip para previsualizarlo</p>
+        </div>
+      </div>
+      <div class="modal-form">
+        <label>Título del clip <input type="text" id="m-title" maxlength="90"></label>
+        <label>Texto gancho (primeros segundos) <input type="text" id="m-hook" maxlength="60" placeholder="3-6 palabras: NO SABÍA QUE ERA ÉL"></label>
+        <div class="row2">
+          <label>Inicio (s) <input type="number" id="m-start" step="0.5" min="0"></label>
+          <label>Fin (s) <input type="number" id="m-end" step="0.5" min="0"></label>
+        </div>
+        <div class="row2">
+          <label>Encuadre
+            <select id="m-layout">
+              <option value="auto">Automático (detecta caras)</option>
+              <option value="split">Cámara arriba + gameplay</option>
+              <option value="speaker">Foco en quien habla</option>
+              <option value="follow">Seguir a la persona</option>
+              <option value="blur">Fondo difuminado</option>
+              <option value="crop">Recorte central</option>
+            </select>
+          </label>
+          <label>Subtítulos
+            <select id="m-capstyle">
+              <option value="viral">Viral (1-3 palabras, pop)</option>
+              <option value="karaoke">Karaoke (4 palabras)</option>
+              <option value="clean">Limpios (frases)</option>
+              <option value="none">Sin subtítulos</option>
+            </select>
+          </label>
+        </div>
+        <div class="cam-line">
+          <button type="button" class="btn-small" id="m-cam-btn">📐 Marcar la cámara</button>
+          <span id="m-cam-state">cámara: detección automática</span>
+          <button type="button" class="btn-link" id="m-cam-clear" hidden>quitar</button>
+        </div>
+        <div class="checks-row">
+          <label class="check-line"><input type="checkbox" id="m-showhook" checked> Texto gancho</label>
+          <label class="check-line"><input type="checkbox" id="m-jumpcut" checked> Quitar pausas</label>
+          <label class="check-line" title="Muestra 2 s del clímax al principio y luego el clip desde el inicio"><input type="checkbox" id="m-preview"> Cold open</label>
+        </div>
+        <div class="m-publish">
+          <div class="m-publish-head">
+            <span>PARA PUBLICAR</span>
+            <button type="button" id="m-copy-title">⧉ copiar título</button>
+            <button type="button" id="m-copy-desc">⧉ copiar descripción</button>
+          </div>
+          <textarea id="m-desc" rows="6" spellcheck="false"></textarea>
+        </div>
+        <div class="m-meta">
+          <div class="m-signals" id="m-signals"></div>
+          <div class="m-reason" id="m-reason"></div>
+        </div>
+        <div class="m-progress" id="m-progress" hidden>
+          <div class="m-progress-bar" id="m-progress-bar"></div>
+          <span id="m-progress-label">Renderizando…</span>
+        </div>
+        <div class="m-actions">
+          <button class="btn-render" id="m-render">⟳ RENDERIZAR</button>
+          <a class="btn-download" id="m-download" hidden>⬇ DESCARGAR</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="cam-picker" id="cam-picker" hidden>
+  <div class="cam-picker-box">
+    <p>Arrastra un rectángulo sobre la <b>cámara del streamer</b>. Se usará arriba, con el gameplay debajo.</p>
+    <div class="cam-stage" id="cam-stage">
+      <img id="cam-img" alt="Fotograma del vídeo" draggable="false">
+      <div class="cam-sel" id="cam-sel" hidden></div>
+    </div>
+    <div class="cam-actions">
+      <button type="button" class="btn-small" id="cam-cancel">Cancelar</button>
+      <button type="button" class="btn-small primary" id="cam-ok">Usar esta cámara</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

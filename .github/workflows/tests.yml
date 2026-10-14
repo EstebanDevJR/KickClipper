@@ -1,0 +1,81 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    name: web (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test webapp/tests/*.test.mjs
+        shell: bash
+
+  desktop:
+    name: escritorio (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # ffmpeg con libass: en Windows y macOS se prueban los scripts del repo
+      - name: ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: ffmpeg (macOS, scripts/get_ffmpeg.sh)
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/get_ffmpeg.sh
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: ffmpeg (Windows, scripts/get_ffmpeg.ps1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/get_ffmpeg.ps1
+          "$PWD\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - name: pytest
+        timeout-minutes: 15
+        run: uv run pytest -v --durations=10
+
+      # Arranque real del servidor con el lanzador de cada sistema
+      - name: Arranque con run.sh
+        if: runner.os != 'Windows'
+        env:
+          KC_NO_OPEN: "1"
+          KC_CHAT_SIGNAL: "false"
+        run: |
+          ./run.sh > server.log 2>&1 &
+          for i in $(seq 1 120); do curl -sf http://127.0.0.1:8420/api/status > status.json && break; sleep 1; done
+          cat status.json || { cat server.log; exit 1; }
+          ./run.sh stop
+      - name: Arranque con run.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          KC_NO_OPEN: "1"
+          KC_CHAT_SIGNAL: "false"
+        run: |
+          $p = Start-Process pwsh -ArgumentList "-NoProfile", "-File", "run.ps1" -PassThru -RedirectStandardOutput server.log -RedirectStandardError server.err
+          $ok = $false
+          for ($i = 0; $i -lt 120; $i++) {
+            try { Invoke-RestMethod http://127.0.0.1:8420/api/status | ConvertTo-Json; $ok = $true; break } catch { Start-Sleep 1 }
+          }
+          if (-not $ok) { Get-Content server.log, server.err; exit 1 }
+          ./run.ps1 stop

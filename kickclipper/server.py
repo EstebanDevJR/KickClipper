@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import db, streamers
 from .config import settings
 from .events import bus
-from .pipeline import runner
+from .pipeline import renderer, runner, subtitles, vision
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -41,10 +41,18 @@ class RenderRequest(BaseModel):
     start: float | None = None
     end: float | None = None
     title: str | None = None
-    layout: str | None = None        # "blur" | "crop"
+    # "auto" (detecta facecam / hablantes) | "split" | "speaker" | "follow" | "blur" | "crop"
+    layout: str | None = None
     format: str | None = None        # "short" (9:16) | "video" (16:9)
     subtitles: bool | None = None
-    show_title: bool | None = None
+    caption_style: str | None = None  # "viral" | "karaoke" | "clean"
+    hook_text: str | None = None      # texto gancho de los primeros segundos
+    show_hook: bool | None = None
+    show_title: bool | None = None    # compatibilidad: equivale a show_hook
+    jumpcut: bool | None = None       # recortar pausas
+    hook_preview: bool | None = None  # cold open: adelanto del clímax al inicio
+    cam_rect: list[float] | None = None  # cámara marcada a mano [x, y, w, h] (0..1)
+    clear_cam: bool | None = None     # olvida la cámara marcada a mano
 
 
 # ---------- Jobs ----------
@@ -114,6 +122,12 @@ async def api_render_clip(clip_id: str, body: RenderRequest):
     if not clip:
         raise HTTPException(404)
     overrides = {k: v for k, v in body.model_dump().items() if v is not None}
+    if overrides.pop("clear_cam", False):
+        overrides["cam_rect"] = None
+    if overrides.get("cam_rect") is not None:
+        r = overrides["cam_rect"]
+        if len(r) != 4 or not all(0 <= float(v) <= 1 for v in r):
+            raise HTTPException(400, "cam_rect debe ser [x, y, ancho, alto] entre 0 y 1")
     try:
         return await asyncio.to_thread(runner.render_clip, clip_id, overrides)
     except ValueError as exc:
@@ -129,6 +143,26 @@ def api_clip_video(clip_id: str):
         raise HTTPException(404)
     return FileResponse(clip["file"], media_type="video/mp4",
                         filename=f"{(clip['title'] or clip_id)[:50]}.mp4")
+
+
+@app.get("/api/clips/{clip_id}/frame")
+def api_clip_frame(clip_id: str, t: float | None = None):
+    """Fotograma del vídeo fuente (para marcar la cámara a mano)."""
+    clip = db.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(404)
+    workdir = runner.job_dir(clip["job_id"])
+    source = next((p for p in (workdir / f"source.{e}" for e in ("mp4", "mkv", "webm", "ts")) if p.exists()), None)
+    if source is None:
+        raise HTTPException(404, "El vídeo fuente ya no existe")
+    at = t if t is not None else (clip["start"] + clip["end"]) / 2
+    out = workdir / "clips" / f"{clip_id}_frame.jpg"
+    out.parent.mkdir(exist_ok=True)
+    try:
+        renderer.thumbnail(source, at, out, width=960)
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/clips/{clip_id}/thumb")
@@ -171,6 +205,13 @@ async def api_status():
         "whisper_model": settings.whisper_model
         if settings.whisper_engine == "mlx" else settings.faster_whisper_model,
         "formats": list(streamers.FORMATS),
+        "layouts": list(renderer.LAYOUTS),
+        "caption_styles": list(subtitles.STYLES),
+        "caption_style": settings.caption_style,
+        "vision": vision.available(),
+        "video_encoder": await asyncio.to_thread(renderer.video_encoder) if ffmpeg_ok else "",
+        "chat_signal": settings.chat_signal,
+        "jumpcut": settings.jumpcut,
         "streamer_socials": {ch: streamers.socials(ch) for ch in settings.streamer_socials},
         "output_dir": str(settings.output_dir),
     }
