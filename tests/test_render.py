@@ -83,7 +83,7 @@ def test_render_uses_bundled_font(tmp_path, ffmpeg):
     # ffmpeg verboso para ver qué fuente elige libass
     proc = subprocess.run([ffmpeg, "-v", "verbose", "-y", "-i", str(src), "-t", "1",
                            "-vf", "ass=f.ass:fontsdir=fonts", "-f", "null", "-"],
-                          cwd=work, capture_output=True, text=True)
+                          cwd=work, capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert "Anton" in proc.stderr and "Poppins" in proc.stderr
 
 
@@ -122,3 +122,16 @@ def test_runner_manual_cam_rect(tmp_path, ffmpeg):
     updated = runner.render_clip(clip["id"], {"cam_rect": [0.7, 0.6, 0.25, 0.35], "jumpcut": False})
     assert updated["render_options"]["layout_used"] == "split"
     assert media_info(updated["file"])["size"] == (1080, 1920)
+
+
+def test_video_encoder_fallback(monkeypatch, ffmpeg):
+    renderer._encoder_cache = None
+    # sin GPU (o con un encoder que no funciona) se usa libx264
+    monkeypatch.setattr(renderer, "_encoder_works", lambda enc: False)
+    assert renderer.video_encoder() == "libx264"
+    renderer._encoder_cache = None
+    monkeypatch.setattr(renderer, "_encoder_works", lambda enc: enc == "h264_nvenc")
+    monkeypatch.setattr(renderer.platform, "system", lambda: "Windows")
+    assert renderer.video_encoder() == "h264_nvenc"
+    assert "-cq" in renderer.encoder_args("h264_nvenc")
+    renderer._encoder_cache = None

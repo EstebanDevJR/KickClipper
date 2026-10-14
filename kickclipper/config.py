@@ -18,8 +18,11 @@ BASE_DIR = Path(os.environ.get("KC_HOME", Path.cwd())).resolve()
 
 def _resolve_ffmpeg() -> str:
     """Prefiere el ffmpeg incluido en ./bin (compilado con libass)."""
-    local = BASE_DIR / "bin" / "ffmpeg"
-    return str(local) if local.exists() else "ffmpeg"
+    for name in ("ffmpeg.exe", "ffmpeg") if platform.system() == "Windows" else ("ffmpeg",):
+        local = BASE_DIR / "bin" / name
+        if local.exists():
+            return str(local)
+    return "ffmpeg"
 
 
 def _default_whisper_engine() -> str:
@@ -85,7 +88,12 @@ class Settings(BaseSettings):
     video_height: int = 1080
     output_fps: int = 30
     video_bitrate: str = "10M"
-    use_videotoolbox: bool = platform.system() == "Darwin"
+    # Codificador H.264: "auto" usa el de la GPU si funciona (VideoToolbox en
+    # macOS; NVENC, Quick Sync o AMF en Windows/Linux) y si no libx264 (CPU).
+    # También se puede forzar: "libx264", "h264_nvenc", "h264_qsv", "h264_amf",
+    # "h264_videotoolbox".
+    video_encoder: str = "auto"
+    use_videotoolbox: bool = platform.system() == "Darwin"  # compatibilidad: False = no usar GPU en Mac
     # Subtítulos: "viral" (1-3 palabras en mayúsculas con pop), "karaoke"
     # (4 palabras con la activa resaltada), "clean" (frases de 1-2 líneas) o "none".
     caption_style: str = "viral"

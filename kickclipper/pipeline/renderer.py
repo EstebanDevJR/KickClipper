@@ -17,6 +17,7 @@ sistemas libx264.
 from __future__ import annotations
 
 import logging
+import platform
 import re
 import shutil
 import subprocess
@@ -79,12 +80,7 @@ def render_clip(
     graph = build_graph(fmt=fmt, layout=layout, plan=plan, timeline=tl, clip_len=clip_len,
                         ass_name=ass_name, has_audio=has_audio)
 
-    if settings.use_videotoolbox:
-        venc = ["-c:v", "h264_videotoolbox", "-b:v", settings.video_bitrate,
-                "-profile:v", "high", "-allow_sw", "1"]
-    else:
-        venc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-                "-maxrate", "12M", "-bufsize", "24M", "-profile:v", "high"]
+    venc = encoder_args(video_encoder())
 
     cmd = [
         settings.ffmpeg_bin, "-y", "-hide_banner",
@@ -101,7 +97,7 @@ def render_clip(
 
     log.info("Renderizando %s (%.1fs, layout %s)", out.name, out_dur, layout)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, cwd=workdir)
+                            text=True, encoding="utf-8", errors="replace", cwd=workdir)
     assert proc.stdout is not None
     for line in proc.stdout:
         m = re.match(r"out_time_us=(\d+)", line.strip()) or re.match(r"out_time_ms=(\d+)", line.strip())
@@ -284,6 +280,65 @@ def _ensure_fonts(workdir: Path) -> None:
         dst.mkdir(exist_ok=True)
 
 
+_HW_ENCODERS = {
+    "Darwin": ["h264_videotoolbox"],
+    "Windows": ["h264_nvenc", "h264_qsv", "h264_amf"],
+    "Linux": ["h264_nvenc", "h264_qsv", "h264_vaapi"],
+}
+_encoder_cache: str | None = None
+
+
+def video_encoder() -> str:
+    """Codificador H.264 a usar: el de la GPU si existe y funciona, si no libx264."""
+    global _encoder_cache
+    if settings.video_encoder != "auto":
+        return settings.video_encoder
+    if _encoder_cache is None:
+        _encoder_cache = "libx264"
+        system = platform.system()
+        candidates = list(_HW_ENCODERS.get(system, []))
+        if system == "Darwin" and not settings.use_videotoolbox:
+            candidates = []
+        for enc in candidates:
+            if enc == "h264_vaapi":
+                continue  # necesita un grafo propio (hwupload); no merece la pena
+            if _encoder_works(enc):
+                _encoder_cache = enc
+                break
+        log.info("Codificador de vídeo: %s", _encoder_cache)
+    return _encoder_cache
+
+
+def _encoder_works(enc: str) -> bool:
+    """Que ffmpeg liste un encoder no garantiza que haya GPU: se prueba de verdad."""
+    try:
+        proc = subprocess.run(
+            [settings.ffmpeg_bin, "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.2",
+             "-pix_fmt", "yuv420p", "-c:v", enc, "-f", "null", "-"],
+            capture_output=True, timeout=20,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def encoder_args(enc: str) -> list[str]:
+    br = settings.video_bitrate
+    if enc == "h264_videotoolbox":
+        return ["-c:v", enc, "-b:v", br, "-profile:v", "high", "-allow_sw", "1"]
+    if enc == "h264_nvenc":
+        return ["-c:v", enc, "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", br,
+                "-maxrate", "12M", "-bufsize", "24M", "-profile:v", "high"]
+    if enc == "h264_qsv":
+        return ["-c:v", enc, "-preset", "medium", "-global_quality", "21", "-b:v", br,
+                "-maxrate", "12M", "-profile:v", "high"]
+    if enc == "h264_amf":
+        return ["-c:v", enc, "-quality", "balanced", "-rc", "vbr_peak", "-b:v", br,
+                "-maxrate", "12M", "-profile:v", "high"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-maxrate", "12M", "-bufsize", "24M", "-profile:v", "high"]
+
+
 _audio_cache: dict[str, bool] = {}
 
 
@@ -291,7 +346,7 @@ def _has_audio(source: Path) -> bool:
     key = str(source)
     if key not in _audio_cache:
         proc = subprocess.run([settings.ffmpeg_bin, "-hide_banner", "-i", key],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
         _audio_cache[key] = "Audio:" in proc.stderr
     return _audio_cache[key]
 

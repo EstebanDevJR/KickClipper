@@ -46,7 +46,7 @@ def make_video(path: Path, seconds: float = 4.0, size: str = "1280x720",
 
 
 def media_info(path: Path) -> dict:
-    proc = subprocess.run([FFMPEG, "-hide_banner", "-i", str(path)], capture_output=True, text=True)
+    proc = subprocess.run([FFMPEG, "-hide_banner", "-i", str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace")
     import re
     dur = re.search(r"Duration: (\d+):(\d+):([\d.]+)", proc.stderr)
     size = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", proc.stderr)

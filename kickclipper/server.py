@@ -209,6 +209,7 @@ async def api_status():
         "caption_styles": list(subtitles.STYLES),
         "caption_style": settings.caption_style,
         "vision": vision.available(),
+        "video_encoder": await asyncio.to_thread(renderer.video_encoder) if ffmpeg_ok else "",
         "chat_signal": settings.chat_signal,
         "jumpcut": settings.jumpcut,
         "streamer_socials": {ch: streamers.socials(ch) for ch in settings.streamer_socials},

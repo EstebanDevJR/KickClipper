@@ -36,6 +36,8 @@ async function refreshStatus() {
   try {
     const s = await api("/status");
     setLed("gear-ffmpeg", s.ffmpeg);
+    const ENC = { libx264: "CPU", h264_nvenc: "GPU NVIDIA", h264_qsv: "GPU Intel", h264_amf: "GPU AMD", h264_videotoolbox: "GPU Apple" };
+    $("ffmpeg-detail").textContent = s.video_encoder ? `render · ${ENC[s.video_encoder] || s.video_encoder}` : "no encontrado — ver README";
     setLed("gear-whisper", true);
     setLed("gear-ollama", s.ollama);
     setLed("gear-vision", s.vision);

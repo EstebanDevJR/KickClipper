@@ -81,7 +81,7 @@ def _model_path() -> Path | None:
 def probe_size(source: Path) -> tuple[int, int] | None:
     """(ancho, alto) del vídeo usando el propio ffmpeg (no siempre hay ffprobe)."""
     proc = subprocess.run([settings.ffmpeg_bin, "-hide_banner", "-i", str(source)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
     m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", proc.stderr)
     return (int(m.group(1)), int(m.group(2))) if m else None
 

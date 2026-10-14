@@ -70,6 +70,20 @@ plataformas; la investigación completa, con fuentes, está en
 - 🤖 **Listo para publicar**: título, descripción, hashtags y redes del
   canal en un `.txt` junto a cada clip.
 
+## Compatibilidad
+
+| | Windows 10/11 | macOS | Linux |
+|---|---|---|---|
+| 🌐 **Versión web** | Chrome / Edge | Chrome / Edge | Chrome / Edge |
+| 🖥️ **Escritorio** | ✓ (`run.ps1`) | ✓ Apple Silicon e Intel | ✓ x64 y ARM |
+| Transcripción | faster-whisper (GPU NVIDIA si hay CUDA) | MLX en Apple Silicon; faster-whisper en Intel | faster-whisper (CUDA si hay) |
+| Render | GPU NVIDIA / Intel / AMD si está disponible; si no, CPU | VideoToolbox | NVENC / Quick Sync si está disponible; si no, CPU |
+
+La versión web necesita WebCodecs (Chrome/Edge 94+); con WebGPU la IA va
+mucho más rápida. En Safari y Firefox no está probada. La versión de
+escritorio se prueba en CI en los tres sistemas
+([`tests.yml`](.github/workflows/tests.yml)).
+
 ## 🌐 Versión web (gratis, sin servidor)
 
 Carpeta [`webapp/`](webapp/): HTML/CSS/JS sin paso de build. Todo el trabajo
@@ -140,13 +154,13 @@ URL del VOD ─▶ ① Descarga (yt-dlp)  +  chat del VOD (en paralelo)
 - [Ollama](https://ollama.com) corriendo con algún modelo (`ollama pull qwen3:8b`)
   — sin Ollama funciona igual, solo con señales automáticas.
 - ffmpeg **con libass** (para los subtítulos). Si el tuyo no lo tiene
-  (el de Homebrew actual no lo incluye), ejecuta:
-
-  ```bash
-  ./scripts/get_ffmpeg.sh   # descarga un binario estático a ./bin/ffmpeg
-  ```
+  (el de Homebrew actual no lo incluye), ejecuta `./scripts/get_ffmpeg.sh`
+  (macOS/Linux) o `scripts\get_ffmpeg.ps1` (Windows): descargan un binario
+  estático a `./bin/`.
 
 ### Inicio rápido
+
+macOS / Linux:
 
 ```bash
 git clone https://github.com/<tu-usuario>/kickclipper.git
@@ -155,8 +169,18 @@ cd kickclipper
 ./run.sh                  # arranca el servidor y abre http://127.0.0.1:8420
 ```
 
-`./run.sh stop` detiene el servidor, `./run.sh restart` lo reinicia (útil tras
-actualizar el código) y con `KC_NO_OPEN=1` no abre el navegador.
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/<tu-usuario>/kickclipper.git
+cd kickclipper
+powershell -ExecutionPolicy Bypass -File .\scripts\get_ffmpeg.ps1   # ffmpeg con libass en .\bin
+powershell -ExecutionPolicy Bypass -File .\run.ps1                   # http://127.0.0.1:8420
+```
+
+`stop` detiene el servidor y `restart` lo reinicia (útil tras actualizar el
+código): `./run.sh stop` o `.\run.ps1 stop`. Con `KC_NO_OPEN=1` no abre el
+navegador. `scripts/clean_uploads.sh` necesita bash (en Windows, Git Bash o WSL).
 
 Después, en la interfaz web:
 
@@ -226,6 +250,7 @@ Variables de entorno con prefijo `KC_` o archivo `.env`:
 | `KC_LOUDNORM` | `true` | Normalizar el audio a −14 LUFS |
 | `KC_FACE_DETECTION` | `true` | Detectar caras para elegir el encuadre |
 | `KC_OUTPUT_FPS` | `30` | fps de salida |
+| `KC_VIDEO_ENCODER` | `auto` | `auto` (GPU si funciona), `libx264`, `h264_nvenc`, `h264_qsv`, `h264_amf`, `h264_videotoolbox` |
 | `KC_STREAMER_SOCIALS` | `{}` | Redes por canal (JSON) para las descripciones |
 | `KC_PORT` | `8420` | Puerto del servidor web |
 
