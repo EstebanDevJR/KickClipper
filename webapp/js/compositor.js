@@ -1,14 +1,18 @@
-// Composición de cada fotograma 9:16 (equivalente a los grafos de renderer.py).
+// Composición de cada fotograma (equivalente a los grafos de renderer.py).
 //
-// Layouts: blur (vídeo completo sobre fondo difuminado), crop (recorte
+// Shorts 9:16 — layouts: blur (vídeo completo sobre fondo difuminado), crop (recorte
 // central), split (facecam arriba + gameplay abajo), follow (recorte que
 // sigue a la persona) y speaker (hablante activo, con pantalla dividida en
-// crosstalk). Encima se dibujan subtítulos y texto gancho.
+// crosstalk). Videos 16:9 — layout fit: el fotograma entero, con fondo
+// difuminado si su proporción no es 16:9. Encima se dibujan subtítulos y
+// texto gancho.
 
 import { drawCaptions, drawHook, SAFE_TOP } from "./captions.js";
 
 export const OUT_W = 1080;
 export const OUT_H = 1920;
+export const VIDEO_W = 1920;
+export const VIDEO_H = 1080;
 
 /**
  * plan: plan de encuadre con tiempos ya en tiempo de SALIDA.
@@ -90,6 +94,11 @@ export function createCompositor({ layout = "blur", plan = {}, captions = null, 
       } else {
         drawRect(src, shot.rect, 0, 0, W, H);
       }
+    } else if (layout === "fit") {
+      const k = Math.min(W / sw, H / sh);
+      const dw = sw * k, dh = sh * k;
+      if (Math.abs(dw - W) > 2 || Math.abs(dh - H) > 2) blurBackground(src);
+      src.draw(ctx, (W - dw) / 2, (H - dh) / 2, dw, dh);
     } else if (layout === "crop") {
       const k = Math.max(W / sw, H / sh);
       const cw = W / k, ch = H / k;

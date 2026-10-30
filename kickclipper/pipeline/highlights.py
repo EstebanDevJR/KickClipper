@@ -424,11 +424,13 @@ class _Ollama:
             log.warning("El modelo %s no está instalado; se usa %s", self.requested, self.model)
         return True
 
-    def warm_up(self, client: httpx.Client) -> None:
-        """Carga el modelo en memoria (prompt vacío) antes de la primera consulta."""
+    def warm_up(self, client: httpx.Client, num_ctx: int = 4096) -> None:
+        """Carga el modelo en memoria (prompt vacío) antes de la primera consulta.
+        Con el mismo num_ctx que la consulta: si cambia, Ollama lo recarga."""
         try:
             client.post(f"{settings.ollama_url}/api/generate",
-                        json={"model": self.model, "keep_alive": "15m"}).raise_for_status()
+                        json={"model": self.model, "keep_alive": "15m",
+                              "options": {"num_ctx": num_ctx}}).raise_for_status()
         except Exception:
             log.warning("Ollama no pudo cargar %s", self.model)
 
@@ -473,7 +475,7 @@ def _llm_score(windows: list[dict], ctx: _Context, llm: _Ollama, channel: str,
     with httpx.Client(timeout=settings.ollama_timeout) as client:
         if on_progress:
             on_progress(0.0, f"Cargando {llm.model} en Ollama (la primera vez puede tardar)")
-        llm.warm_up(client)
+        llm.warm_up(client, num_ctx=8192 if windows[0]["format"] == "video" else 4096)
         for n, w in enumerate(windows):
             is_video = w["format"] == "video"
             sig = _signals_text(w, ctx)

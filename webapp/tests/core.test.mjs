@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 
 import { contrast, findPeaks, combineExcitement, rollingMedian } from "../js/signals.js";
 import { buildTimeline, Timeline } from "../js/timeline.js";
-import { detect, Context, makeWindow, tightenStart, numberedLines, applyLlm, refine, regionsToTranscribe } from "../js/highlights.js";
+import { detect, Context, makeWindow, tightenStart, numberedLines, applyLlm, refine, regionsToTranscribe,
+  VIDEO_LIMITS, buildVideoWindows, formatOf, videoRegions } from "../js/highlights.js";
+import { buildPrompt } from "../js/llm.js";
 import { plan, speakerAt, planToOutput, CAM_FRACTION, MIN_SHOT } from "../js/vision-plan.js";
 import { cards, buildCaptionTrack, splitTwo } from "../js/captions.js";
 import { integratedLoudness, normalize } from "../js/loudness.js";
@@ -312,4 +314,51 @@ test("cámara marcada a mano: split con el aspecto del panel", async () => {
   const [x, y, w, h] = p.cam;
   assert.ok(Math.abs((w * 1920) / (h * 1080) - 1080 / Math.round(1920 * CAM_FRACTION)) < 0.02);
   assert.ok(x <= 0.05 + 1e-6 && x + w >= 0.25 - 1e-6 && y >= 0 && y + h <= 1.0001);
+});
+
+// ---------- videos 16:9 ----------
+
+const speech = (seconds, every = 3) => Array.from({ length: Math.floor(seconds / every) }, (_, i) => ({
+  text: `frase ${i} del stream`, start: i * every, end: i * every + every - 0.2,
+  words: [{ w: "frase", s: i * every, e: i * every + 1 }],
+}));
+
+test("formatOf: 5 min o más es un video", () => {
+  assert.equal(formatOf(VIDEO_LIMITS), "video");
+  assert.equal(formatOf({ min: 15, max: 60, target: 40 }), "short");
+});
+
+test("buildVideoWindows: 5-10 min sin cruzar huecos de transcripción", () => {
+  const segs = speech(1500);
+  const wins = buildVideoWindows(segs);
+  assert.ok(wins.length > 10 && wins.length < 400);
+  for (const w of wins) {
+    assert.equal(w.format, "video");
+    assert.ok(w.end - w.start >= 300 && w.end - w.start <= 600);
+  }
+  // dos tramos transcritos de 8 min separados: ninguna ventana los une
+  const gap = [...speech(480), ...speech(480).map((s) => ({ ...s, start: s.start + 2000, end: s.end + 2000 }))];
+  assert.ok(buildVideoWindows(gap).every((w) => w.end <= 480 || w.start >= 2000));
+});
+
+test("videoRegions: el tramo más activo, sin solapes y con tope de minutos", () => {
+  const n = 4 * 3600;
+  const moment = new Float64Array(n).fill(0.1);
+  moment.fill(0.9, 7200, 7800);
+  const regions = videoRegions(moment, n, { maxMinutes: 30 });
+  assert.equal(regions.length, 2);
+  assert.ok(regions.some(([a, b]) => a <= 7200 && b >= 7800));
+  assert.deepEqual(videoRegions(moment.slice(0, 900), 900, { maxMinutes: 30 }), [[0, 900]]);
+});
+
+test("detect en modo video devuelve videos y el prompt es el de video", async () => {
+  const segs = speech(1200);
+  const exc = new Float64Array(1200).fill(0.2);
+  exc.fill(0.9, 500, 520);
+  const found = await detect(segs, exc, 1200, { limits: VIDEO_LIMITS, maxClips: 2 });
+  assert.ok(found.length >= 1 && found.every((w) => w.format === "video"));
+  for (const w of found) assert.ok(w.end - w.start >= 290 && w.end - w.start <= 600);
+  const prompt = buildPrompt(found[0], new Context(segs, exc, null, 1200, VIDEO_LIMITS), "canal", VIDEO_LIMITS);
+  assert.match(prompt, /videos de YouTube/);
+  assert.equal(found[0].lineIndex, undefined);
 });

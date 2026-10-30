@@ -9,7 +9,17 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><clipPath id='l'><polygon points='0,0 40.5,0 18.5,64 0,64'/></clipPath><clipPath id='r'><polygon points='43.5,0 64,0 64,64 21.5,64'/></clipPath></defs><rect width='64' height='64' rx='15' fill='%2353fc18'/><g fill='%23051005'><path clip-path='url(%23l)' d='M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z'/><path clip-path='url(%23r)' transform='translate(2 -2.5)' d='M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z'/></g></svg>">
+<link rel="icon" href="icons/logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#070a07">
+<meta property="og:type" content="website">
+<meta property="og:title" content="KickClipper — clips virales de Kick en tu navegador">
+<meta property="og:description" content="Shorts 9:16 y videos 16:9 de VODs de Kick con IA local. Nada se sube a ningún servidor.">
+<meta property="og:image" content="icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <script type="importmap">
 {
   "imports": {
@@ -115,10 +125,15 @@
     <div class="console-opts">
       <label class="opt"><span>Rango</span><input id="range-input" placeholder="01:00:00-01:30:00" pattern="^\d{1,2}:\d{2}(:\d{2})?-\d{1,2}:\d{2}(:\d{2})?$"></label>
       <label class="opt"><span>Clips</span><select id="clips-input"><option value="4">4</option><option value="8" selected>8</option><option value="12">12</option></select></label>
-      <label class="opt"><span>Duración</span><select id="dur-input">
-        <option value="15-60" selected>15–60 s (alcance)</option>
-        <option value="61-90">61–90 s (monetiza en TikTok)</option>
-        <option value="20-180">hasta 3 min (Shorts / Reels)</option>
+      <label class="opt"><span>Formato</span><select id="dur-input">
+        <optgroup label="Shorts 9:16">
+          <option value="15-60" selected>15–60 s (alcance)</option>
+          <option value="61-90">61–90 s (monetiza en TikTok)</option>
+          <option value="20-180">hasta 3 min (Shorts / Reels)</option>
+        </optgroup>
+        <optgroup label="Videos 16:9">
+          <option value="300-600">5–10 min (YouTube)</option>
+        </optgroup>
       </select></label>
       <label class="opt"><span>Idioma</span><select id="lang-input"><option value="">auto</option><option value="es">español</option><option value="en">inglés</option><option value="pt">portugués</option></select></label>
       <label class="opt"><span>Transcripción</span><select id="whisper-input"></select></label>
@@ -172,7 +187,7 @@
     </details>
     <details>
       <summary>Requisitos y límites</summary>
-      <p>Chrome o Edge recientes en ordenador (WebCodecs; WebGPU acelera mucho la IA). La primera vez descarga el modelo de transcripción (~150 MB, o ~1 GB el preciso) y, si la activas, la IA (~1 GB). Un VOD de varias horas se analiza en minutos porque solo se descarga la variante más ligera para el análisis y la calidad completa solo para los tramos que se renderizan. Para vídeos largos de 5–10 min usa la versión de escritorio.</p>
+      <p>Chrome o Edge recientes en ordenador (WebCodecs; WebGPU acelera mucho la IA). La primera vez descarga el modelo de transcripción (~150 MB, o ~1 GB el preciso) y, si la activas, la IA (~1 GB). Un VOD de varias horas se analiza en minutos porque solo se descarga la variante más ligera para el análisis y la calidad completa solo para los tramos que se renderizan. Los videos 16:9 de 5–10 min se renderizan enteros en memoria: necesitan 1–2 GB de RAM libre por video.</p>
     </details>
   </section>
 </main>
@@ -204,6 +219,7 @@
               <option value="follow">Seguir a la persona</option>
               <option value="blur">Fondo difuminado</option>
               <option value="crop">Recorte central</option>
+              <option value="fit" disabled>16:9 completo (videos)</option>
             </select>
           </label>
           <label>Subtítulos

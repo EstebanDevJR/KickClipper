@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#7dff4d"/><stop offset="0.45" stop-color="#53fc18"/><stop offset="1" stop-color="#3fd40c"/>
+    </linearGradient>
+    <clipPath id="l"><polygon points="0,0 40.5,0 18.5,64 0,64"/></clipPath>
+    <clipPath id="r"><polygon points="43.5,0 64,0 64,64 21.5,64"/></clipPath>
+    <path id="play" d="M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z"/>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#bg)"/>
+  <g fill="#051005">
+    <use href="#play" clip-path="url(#l)"/>
+    <use href="#play" clip-path="url(#r)" transform="translate(2 -2.5)"/>
+  </g>
+</svg>

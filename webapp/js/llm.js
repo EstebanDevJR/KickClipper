@@ -54,7 +54,27 @@ const SCHEMA = {
   required: ["score", "hook", "standalone", "payoff", "title", "hook_text", "description", "hashtags", "reason"],
 };
 
+/** Videos 16:9 de 5-10 min (mismo prompt que la versión de escritorio). */
+export function buildVideoPrompt(w, channel) {
+  // ~5000 caracteres caben en el contexto de los modelos pequeños del navegador
+  const text = w.segments.map((s) => s.text).join(" ").slice(0, 5000);
+  return `Eres editor experto de videos de YouTube (5-10 minutos) hechos con streams.
+Evalúa si este fragmento largo sostiene la atención varios minutos: historias o situaciones con desarrollo y remate, drama continuado, partidas épicas completas, debates con sustancia, humor sostenido. Penaliza relleno, silencios, temas inconexos y fragmentos sin principio ni final claros.
+
+Canal: ${channel || "?"}
+Señales automáticas: ${signalsText(w)}
+
+Transcripción:
+"""${text}"""
+
+Título, descripción y hashtags en el MISMO idioma de la transcripción.
+
+Responde SOLO con JSON:
+{"score": <0-10>, "hook": <0-10 fuerza del primer minuto>, "standalone": <0-10>, "payoff": <0-10>, "title": "<gancho, máx 60 caracteres>", "hook_text": "<3 a 6 palabras>", "description": "<2-3 frases que vendan el video sin destripar el final, sin hashtags>", "hashtags": ["<3-5 sin #>"], "keywords": ["<hasta 5 palabras>"], "category": "<${CATEGORIES.join("|")}>", "reason": "<1 frase>"}`;
+}
+
 export function buildPrompt(w, ctx, channel, limits = LIMITS) {
+  if (w.format === "video") return buildVideoPrompt(w, channel);
   const { lines, index } = numberedLines(w, ctx);
   w.lineIndex = index;
   return `Eres editor experto de clips virales de streamers.
@@ -105,7 +125,7 @@ export async function createLLM(kind, { model = "Qwen3-1.7B-q4f16_1-MLC", onProg
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model, prompt, stream: false, format: SCHEMA,
-        options: { temperature: 0.3, num_predict: 450, num_ctx: 4096 },
+        options: { temperature: 0.3, num_predict: 450, num_ctx: 8192 },
         keep_alive: "15m",
         ...(think ? { think: false } : {}),
       }),
@@ -116,7 +136,8 @@ export async function createLLM(kind, { model = "Qwen3-1.7B-q4f16_1-MLC", onProg
     const warm = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, keep_alive: "15m" }),
+      // mismo num_ctx que las consultas: si cambia, Ollama recarga el modelo
+      body: JSON.stringify({ model, keep_alive: "15m", options: { num_ctx: 8192 } }),
     });
     if (!warm.ok) throw new Error(`Ollama no pudo cargar ${model} (${warm.status})`);
     onProgress?.(1, `${model} listo`);

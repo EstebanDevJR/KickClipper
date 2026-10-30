@@ -331,6 +331,12 @@ body {
   border-right: 1px solid var(--line);
 }
 .modal-player video { width: 100%; max-height: 92vh; aspect-ratio: 9/16; object-fit: contain; }
+/* videos 16:9: el reproductor ocupa todo el ancho, encima del formulario */
+.modal.is-video .modal-cols { grid-template-columns: 1fr; }
+.modal.is-video .modal-player { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }
+.modal.is-video .modal-player video { aspect-ratio: 16/9; max-height: 56vh; }
+.modal.is-video .player-placeholder { position: static; aspect-ratio: 16/9; width: 100%; }
+.modal-form :disabled { opacity: .45; cursor: not-allowed; }
 .player-placeholder { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 6px; }
 .player-placeholder span { font-family: var(--display); color: #2c3a28; font-size: 18px; letter-spacing: 3px; }
 .player-placeholder p { color: #3d4f3a; font-size: 12px; }

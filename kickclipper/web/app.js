@@ -50,8 +50,41 @@ async function refreshStatus() {
       : !models.length ? "sin modelos — ejecuta `ollama pull qwen3:8b`"
       : `${models.length} modelo${models.length === 1 ? "" : "s"} instalado${models.length === 1 ? "" : "s"}`;
     fillModels(models, s.ollama_model);
+    showSuggestion(s, models);
     streamerSocials = s.streamer_socials || {};
   } catch { /* servidor aún arrancando */ }
+}
+
+/** Modelo recomendado para la memoria del equipo, con botón para instalarlo. */
+function showSuggestion(s, models) {
+  const box = $("model-suggest");
+  const rec = s.recommended_model;
+  const installed = models.some((m) => m === rec || m === `${rec}:latest`);
+  box.hidden = !s.ollama || !rec || (installed && !s.ollama_pulling);
+  if (box.hidden) return;
+  $("suggest-name").textContent = rec;
+  $("suggest-why").textContent = s.recommended_reason || "";
+  if (s.ollama_pulling) setPullState({ name: s.ollama_pulling, status: "descargando…" });
+}
+
+function setPullState(ev) {
+  const busy = !ev.done;
+  $("suggest-btn").disabled = busy;
+  $("suggest-btn").textContent = busy ? "Instalando…" : ev.error ? "⟳ Reintentar" : "⬇ Instalar";
+  document.querySelector(".suggest-bar").hidden = !busy;
+  if (typeof ev.progress === "number") $("suggest-fill").style.width = `${Math.round(ev.progress * 100)}%`;
+  const pct = typeof ev.progress === "number" && busy ? ` ${Math.round(ev.progress * 100)}%` : "";
+  $("suggest-state").textContent = ev.error ? `error: ${ev.error}` : `${ev.status || ""}${pct}`;
+}
+
+async function installSuggested() {
+  const name = $("suggest-name").textContent;
+  setPullState({ name, status: "empezando…" });
+  try {
+    await api("/models/pull", { method: "POST", body: JSON.stringify({ name }) });
+  } catch (err) {
+    setPullState({ name, error: err.message, done: true });
+  }
 }
 
 /** Selector con todos los modelos de Ollama instalados; recuerda la elección. */
@@ -456,6 +489,14 @@ function connectSSE() {
       patchClip(ev.clip);
       renderClips();
       if (modalClip && modalClip.id === ev.clip.id) { modalClip = ev.clip; updateModalVideo(ev.clip); }
+    } else if (ev.type === "model_pull") {
+      setPullState(ev);
+      if (ev.done && !ev.error) {
+        // recién instalado: se elige directamente
+        try { localStorage.setItem("kc-model", ev.name); } catch { /* sin almacenamiento */ }
+        $("model-input").dataset.key = "";
+        refreshStatus();
+      }
     } else if (ev.type === "clip_progress" && modalClip && ev.clip_id === modalClip.id) {
       $("m-progress").hidden = false;
       $("m-progress-bar").style.width = `${Math.round(ev.progress * 100)}%`;
@@ -485,6 +526,7 @@ function updateJobProgress(ev) {
 (async function init() {
   refreshStatus();
   setInterval(refreshStatus, 15000);
+  $("suggest-btn").addEventListener("click", installSuggested);
   $("model-input").addEventListener("change", (e) => {
     try { localStorage.setItem("kc-model", e.target.value); } catch { /* sin almacenamiento */ }
   });

@@ -2,7 +2,8 @@
 //
 // Vídeo: para cada fotograma de salida (30 fps) se pide el fotograma fuente
 // que le corresponde según la línea de tiempo (jump cuts, cold open), se
-// compone en un canvas 1080×1920 y se codifica. Audio: se decodifica el tramo,
+// compone en el canvas (1080×1920 los shorts, 1920×1080 los videos) y se
+// codifica. Audio: se decodifica el tramo,
 // se recompone con la misma línea de tiempo y se normaliza a -14 LUFS.
 // Salida: MP4 H.264/AAC si el navegador puede codificar H.264 (Chrome/Edge);
 // si no, WebM VP9/Opus.
@@ -40,10 +41,10 @@ export async function chooseOutput(force = null) {
  * timeline: Timeline con tramos relativos a start.
  * compositor: createCompositor(...).
  */
-export async function renderClip({ source, start, end, timeline, compositor, fps = 30, onProgress, signal } = {}) {
+export async function renderClip({ source, start, end, timeline, compositor, fps = 30, bitrate = 8e6, onProgress, signal } = {}) {
   const choice = await chooseOutput();
   const output = new MB.Output({ format: choice.format(), target: new MB.BufferTarget() });
-  const videoSource = new MB.CanvasSource(compositor.canvas, { codec: choice.video, bitrate: 8e6, keyFrameInterval: 2 });
+  const videoSource = new MB.CanvasSource(compositor.canvas, { codec: choice.video, bitrate, keyFrameInterval: 2 });
   output.addVideoTrack(videoSource, { frameRate: fps });
   let audioSource = null;
   if (source.audioTrack) {

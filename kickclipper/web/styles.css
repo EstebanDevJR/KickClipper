@@ -86,6 +86,19 @@ body {
 .gear:nth-child(3) { animation-delay: .08s; }
 .gear:nth-child(4) { animation-delay: .16s; }
 .gear b { display: block; font-size: 13px; }
+
+/* modelo recomendado para el equipo (bajo el LED de Ollama) */
+.suggest {
+  margin: -2px 0 10px; padding: 10px 12px; border: 1px dashed var(--green-dim);
+  border-radius: 10px; font-size: 11.5px; color: var(--text-dim);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.suggest b { color: var(--green); font-family: var(--mono); font-weight: 600; }
+.suggest span { display: block; font-size: 10.5px; margin-top: 2px; }
+.suggest .btn-small { align-self: flex-start; }
+.suggest-bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.suggest-bar i { display: block; height: 100%; width: 0; background: var(--green); transition: width .3s ease; }
+.suggest-state { font-family: var(--mono); font-size: 10.5px; }
 .gear i { display: block; font-style: normal; font-size: 10.5px; color: var(--text-dim); font-family: var(--mono); max-width: 165px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .led {

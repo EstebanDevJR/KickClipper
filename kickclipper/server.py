@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -11,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from . import db, streamers
+from . import db, hardware, streamers
 from .config import settings
 from .events import bus
 from .pipeline import highlights, renderer, runner, subtitles, vision
@@ -55,6 +58,10 @@ class RenderRequest(BaseModel):
     hook_preview: bool | None = None  # cold open: adelanto del clímax al inicio
     cam_rect: list[float] | None = None  # cámara marcada a mano [x, y, w, h] (0..1)
     clear_cam: bool | None = None     # olvida la cámara marcada a mano
+
+
+class PullRequest(BaseModel):
+    name: str
 
 
 # ---------- Jobs ----------
@@ -197,6 +204,8 @@ async def api_status():
         "ollama_models": models or [],
         # el de la configuración si está instalado; si no, el que se usará en su lugar
         "ollama_model": highlights.pick_model(settings.ollama_model, models or []) or settings.ollama_model,
+        "ollama_pulling": _pulling,
+        **await asyncio.to_thread(hardware.summary),
         "whisper_engine": settings.whisper_engine,
         "whisper_model": settings.whisper_model
         if settings.whisper_engine == "mlx" else settings.faster_whisper_model,
@@ -211,6 +220,58 @@ async def api_status():
         "streamer_socials": {ch: streamers.socials(ch) for ch in settings.streamer_socials},
         "output_dir": str(settings.output_dir),
     }
+
+
+# ---------- Modelos de Ollama ----------
+
+_pulling: str | None = None  # modelo que se está descargando (uno a la vez)
+_MODEL_NAME = re.compile(r"^[\w.\-/]+(:[\w.\-]+)?$")
+
+
+@app.post("/api/models/pull")
+def api_pull_model(body: PullRequest):
+    """Descarga un modelo con `ollama pull`; el progreso llega por /api/events."""
+    global _pulling
+    name = body.name.strip()
+    if not _MODEL_NAME.match(name) or len(name) > 200:
+        raise HTTPException(400, "Nombre de modelo no válido")
+    if _pulling:
+        raise HTTPException(409, f"Ya se está descargando {_pulling}")
+    _pulling = name
+    threading.Thread(target=_pull, args=(name,), daemon=True, name="kc-pull").start()
+    return {"ok": True}
+
+
+def _pull(name: str) -> None:
+    global _pulling
+    import httpx
+
+    def send(**fields) -> None:
+        bus.publish({"type": "model_pull", "name": name, **fields})
+
+    try:
+        with httpx.stream("POST", f"{settings.ollama_url}/api/pull",
+                          json={"model": name, "stream": True}, timeout=httpx.Timeout(30, read=600)) as r:
+            r.raise_for_status()
+            last = -1.0
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                msg = json.loads(line)
+                if msg.get("error"):
+                    raise RuntimeError(msg["error"])
+                total, done = msg.get("total"), msg.get("completed")
+                frac = done / total if total and done else None
+                # un evento por cada 1 % como mucho: la descarga manda cientos por segundo
+                if frac is None or frac - last >= 0.01 or frac >= 1:
+                    last = frac if frac is not None else last
+                    send(status=msg.get("status", ""), progress=frac)
+        send(status="listo", progress=1.0, done=True)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Fallo descargando %s", name)
+        send(status="error", error=str(exc)[:300], done=True)
+    finally:
+        _pulling = None
 
 
 @app.get("/api/events")
