@@ -15,7 +15,7 @@ Dos formas de usarlo, las dos sin APIs en la nube ni claves:
 |---|---|---|
 | Dónde corre | en tu navegador (Chrome/Edge) | servidor local (Python) |
 | Instalación | ninguna: abre la web | `uv` + ffmpeg + Ollama |
-| Hosting | estático y gratis (GitHub Pages, Vercel…) | tu máquina |
+| Hosting | estático y gratis (Vercel) | tu máquina |
 | Transcripción | Whisper en el navegador (WebGPU/WASM) | Whisper large-v3-turbo (MLX / faster-whisper) |
 | IA para elegir | opcional: WebLLM, la IA de Chrome o cualquier modelo de Ollama de tu PC | cualquier modelo que tengas en Ollama (por defecto `qwen3:8b`) |
 | Formatos | shorts 9:16 + videos 16:9 | shorts 9:16 + videos 16:9 |
@@ -122,17 +122,15 @@ descarga directa o hace falta el **chat del VOD**, la app se lo pide por
 También puedes arrastrar un archivo de vídeo o pegar una URL directa
 (MP4/M3U8 con CORS).
 
-### Desplegarla gratis en GitHub Pages
+### Desplegarla gratis en Vercel
 
-1. En el repositorio: **Settings → Pages → Source: GitHub Actions**.
-2. Haz push a `main`: el workflow [`pages.yml`](.github/workflows/pages.yml)
-   pasa los tests y publica `webapp/` en `https://<usuario>.github.io/<repo>/`.
+Importa el repo en [Vercel](https://vercel.com/new) tal cual:
+[`vercel.json`](vercel.json) publica solo `webapp/` (sin build ni Python) y
+cada push a `main` la actualiza. Solo se puede alojar la versión web; la de
+escritorio corre siempre en el equipo de cada usuario.
 
-Funciona igual en cualquier hosting estático (Cloudflare Pages, Netlify,
-Vercel…): no necesita cabeceras especiales. En **Vercel** importa el repo tal
-cual: [`vercel.json`](vercel.json) publica solo `webapp/` (sin build ni
-Python). Solo se puede alojar la versión web; la de escritorio corre siempre
-en el equipo de cada usuario.
+Al ser archivos estáticos sin cabeceras especiales, también sirve cualquier
+otro hosting estático (Cloudflare Pages, Netlify…).
 
 **Usar tus modelos de Ollama en la web publicada:** quien tenga
 [Ollama](https://ollama.com) puede elegir cualquier modelo que tenga

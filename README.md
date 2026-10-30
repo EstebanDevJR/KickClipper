@@ -15,7 +15,7 @@ Two ways to use it, neither needs cloud APIs or keys:
 |---|---|---|
 | Runs in | your browser (Chrome/Edge) | a local server (Python) |
 | Install | none: open the site | `uv` + ffmpeg + Ollama |
-| Hosting | static and free (GitHub Pages, Vercel…) | your machine |
+| Hosting | static and free (Vercel) | your machine |
 | Transcription | Whisper in the browser (WebGPU/WASM) | Whisper large-v3-turbo (MLX / faster-whisper) |
 | AI ranking | optional: WebLLM, Chrome's built-in AI or any Ollama model on your PC | any Ollama model you have installed (default `qwen3:8b`) |
 | Formats | 9:16 shorts + 16:9 videos | 9:16 shorts + 16:9 videos |
@@ -116,16 +116,15 @@ kick.com and the video host only).
 
 You can also drop a video file or paste a direct URL (MP4/M3U8 with CORS).
 
-### Deploy it for free on GitHub Pages
+### Deploy it for free on Vercel
 
-1. In the repository: **Settings → Pages → Source: GitHub Actions**.
-2. Push to `main`: the [`pages.yml`](.github/workflows/pages.yml) workflow runs
-   the tests and publishes `webapp/` at `https://<user>.github.io/<repo>/`.
+Import the repo in [Vercel](https://vercel.com/new) as is:
+[`vercel.json`](vercel.json) publishes only `webapp/` (no build, no Python)
+and every push to `main` updates it. Only the web version can be hosted; the
+desktop one always runs on each user's own machine.
 
-Any static host works too (Cloudflare Pages, Netlify, Vercel…): no special
-headers needed. On **Vercel**, import the repo as is: [`vercel.json`](vercel.json)
-publishes only `webapp/` (no build, no Python). Only the web version can be
-hosted; the desktop one always runs on each user's own machine.
+Since it is plain static files with no special headers, any other static
+host works too (Cloudflare Pages, Netlify…).
 
 **Using your own Ollama models on the hosted site:** visitors with
 [Ollama](https://ollama.com) can pick any model they have installed. Ollama

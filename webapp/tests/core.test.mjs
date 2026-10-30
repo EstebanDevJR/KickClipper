@@ -296,7 +296,7 @@ test("palabras a frases y limpieza de alucinaciones", () => {
 // ---------- marcador de Kick ----------
 
 test("bookmarklet y lectura del payload", () => {
-  const href = bookmarklet("https://example.github.io/KickClipper/");
+  const href = bookmarklet("https://kickclipper.vercel.app/");
   assert.ok(href.startsWith("javascript:"));
   const code = decodeURIComponent(href.slice("javascript:".length));
   assert.ok(code.includes("/api/v1/video/") && code.includes("kc:'fetch-res'"));
