@@ -53,14 +53,18 @@ body {
 }
 
 .brand-mark {
-  font-family: var(--display); font-weight: 800; font-size: 30px;
   width: 64px; height: 64px; display: grid; place-items: center;
-  background: var(--green); color: #051005; border-radius: 14px;
-  box-shadow: 0 0 34px var(--green-glow), inset 0 -4px 0 rgba(0,0,0,.25);
-  letter-spacing: -2px;
+  background: linear-gradient(160deg, #7dff4d, var(--green) 45%, #3fd40c);
+  border-radius: 15px;
+  box-shadow: 0 0 34px var(--green-glow), inset 0 -4px 0 rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.35);
   animation: pop-in .5s cubic-bezier(.2,1.6,.4,1) both;
 }
-.brand-mark span { opacity: .55; }
+/* logo: un "play" cortado en diagonal; la mitad derecha salta al pasar el ratón */
+.logo { width: 100%; height: 100%; overflow: visible; }
+.logo path { fill: #051005; }
+.logo-r { transform: translate(2px, -2.5px); transition: transform .35s cubic-bezier(.2,1.6,.4,1); }
+.brand:hover .logo-r { transform: translate(3.5px, -5px); }
+@media (prefers-reduced-motion: reduce) { .logo-r { transition: none; } }
 .brand-name {
   margin-top: 14px; font-family: var(--display); font-size: 17px;
   font-weight: 400; letter-spacing: 1px;

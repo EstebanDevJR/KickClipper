@@ -45,10 +45,27 @@ async function refreshStatus() {
     $("vision-detail").textContent = s.vision ? "facecam · hablante activo" : "instala opencv-python-headless";
     $("chat-detail").textContent = s.chat_signal ? "picos de mensajes" : "desactivado (KC_CHAT_SIGNAL)";
     $("whisper-detail").textContent = `${s.whisper_engine} · ${s.whisper_model}`;
-    $("ollama-detail").textContent = s.ollama
-      ? s.ollama_model : "servidor apagado — ejecuta `ollama serve`";
+    const models = s.ollama_models || [];
+    $("ollama-detail").textContent = !s.ollama ? "servidor apagado — ejecuta `ollama serve`"
+      : !models.length ? "sin modelos — ejecuta `ollama pull qwen3:8b`"
+      : `${models.length} modelo${models.length === 1 ? "" : "s"} instalado${models.length === 1 ? "" : "s"}`;
+    fillModels(models, s.ollama_model);
     streamerSocials = s.streamer_socials || {};
   } catch { /* servidor aún arrancando */ }
+}
+
+/** Selector con todos los modelos de Ollama instalados; recuerda la elección. */
+function fillModels(models, fallback) {
+  const sel = $("model-input");
+  const key = [...models].join("|");
+  if (sel.dataset.key === key) return;  // sin cambios: no tocar lo que el usuario eligió
+  sel.dataset.key = key;
+  let saved = null;
+  try { saved = localStorage.getItem("kc-model"); } catch { /* sin almacenamiento */ }
+  sel.innerHTML = models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")
+    + `<option value="none">sin IA (solo señales)</option>`;
+  sel.value = saved && (saved === "none" || models.includes(saved)) ? saved
+    : models.includes(fallback) ? fallback : (models[0] || "none");
 }
 
 function setLed(gearId, ok) {
@@ -203,7 +220,7 @@ function renderSignals(clip) {
   if (used) chips.push(`<span class="chip">encuadre: ${esc(LAYOUT_LABEL[used] || used)}</span>`);
   if (meta.llm_scores?.hook !== undefined) {
     const l = meta.llm_scores;
-    chips.push(`<span class="chip">IA · gancho ${l.hook} · se entiende ${l.standalone} · remate ${l.payoff}</span>`);
+    chips.push(`<span class="chip">IA${l.model ? ` (${esc(l.model)})` : ""} · gancho ${l.hook} · se entiende ${l.standalone} · remate ${l.payoff}</span>`);
   }
   $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
 }
@@ -393,6 +410,7 @@ $("job-form").addEventListener("submit", async (e) => {
         sections: $("sections-input").value.trim() || null,
         auto_render: parseInt($("autorender-input").value, 10),
         formats: $("formats-input").value.split(","),
+        llm_model: $("model-input").value || null,
       }),
     });
     // el evento SSE del worker puede llegar antes que esta respuesta:
@@ -467,6 +485,9 @@ function updateJobProgress(ev) {
 (async function init() {
   refreshStatus();
   setInterval(refreshStatus, 15000);
+  $("model-input").addEventListener("change", (e) => {
+    try { localStorage.setItem("kc-model", e.target.value); } catch { /* sin almacenamiento */ }
+  });
   connectSSE();
   jobs = await api("/jobs");
   renderJobs();

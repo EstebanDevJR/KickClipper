@@ -15,7 +15,7 @@ Dos formas de usarlo, las dos sin APIs en la nube ni claves:
 | Instalación | ninguna: abre la web | `uv` + ffmpeg + Ollama |
 | Hosting | estático y gratis (GitHub Pages) | tu máquina |
 | Transcripción | Whisper en el navegador (WebGPU/WASM) | Whisper large-v3-turbo (MLX / faster-whisper) |
-| IA para elegir | opcional: WebLLM o la IA de Chrome | Ollama (`qwen3:8b`) |
+| IA para elegir | opcional: WebLLM, la IA de Chrome o cualquier modelo de Ollama de tu PC | cualquier modelo que tengas en Ollama (por defecto `qwen3:8b`) |
 | Formatos | shorts 9:16 | shorts 9:16 + videos 16:9 |
 
 En ambos casos el vídeo, la transcripción y los clips **nunca salen de tu
@@ -127,7 +127,17 @@ También puedes arrastrar un archivo de vídeo o pegar una URL directa
    pasa los tests y publica `webapp/` en `https://<usuario>.github.io/<repo>/`.
 
 Funciona igual en cualquier hosting estático (Cloudflare Pages, Netlify,
-Vercel…): no necesita cabeceras especiales. Para probarla en local:
+Vercel…): no necesita cabeceras especiales. En **Vercel** importa el repo tal
+cual: [`vercel.json`](vercel.json) publica solo `webapp/` (sin build ni
+Python). Solo se puede alojar la versión web; la de escritorio corre siempre
+en el equipo de cada usuario.
+
+**Usar tus modelos de Ollama en la web publicada:** quien tenga
+[Ollama](https://ollama.com) puede elegir cualquier modelo que tenga
+instalado. Ollama debe permitir el origen de la web, p. ej. abriéndolo con
+`OLLAMA_ORIGINS=https://tu-web.vercel.app`; la página muestra el valor exacto.
+
+Para probarla en local:
 
 ```bash
 python3 -m http.server -d webapp 8000   # y abre http://localhost:8000

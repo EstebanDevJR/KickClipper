@@ -42,6 +42,25 @@ def enqueue(job_id: str) -> None:
     _queue.put(job_id)
 
 
+_RUNNING = ("downloading", "transcribing", "analyzing", "scoring", "rendering")
+
+
+def recover() -> None:
+    """Al arrancar: la cola vive en memoria, así que lo que quedó a medias al
+    cerrar el servidor se marca como interrumpido (se puede reintentar) y lo
+    que estaba en cola se vuelve a encolar."""
+    for job in reversed(db.list_jobs()):  # los más antiguos primero
+        if job["status"] in _RUNNING:
+            db.update_job(job["id"], status="error",
+                          error="Interrumpido al cerrar el servidor: pulsa reintentar")
+        elif job["status"] == "queued":
+            enqueue(job["id"])
+        for clip in db.list_clips(job["id"]):
+            if clip["status"] == "rendering":
+                done = clip.get("file") and Path(clip["file"]).exists()
+                db.update_clip(clip["id"], status="rendered" if done else "candidate")
+
+
 def cancel(job_id: str) -> None:
     _cancelled.add(job_id)
 
@@ -155,6 +174,7 @@ def _run_job(job_id: str) -> None:
         candidates = highlights.detect(
             segments, excitement, duration, _progress(job_id, "scoring"),
             formats=formats, chat=chat_curve, channel=channel,
+            llm_model=options.get("llm_model"),
         )
         if not candidates:
             raise RuntimeError("No se encontraron momentos clipeables")

@@ -1,0 +1,6 @@
+# Solo se publica la versión web (estática). La de escritorio (Python) no
+# corre en Vercel: se instala en el propio equipo.
+/*
+!/webapp
+!/vercel.json
+/webapp/tests

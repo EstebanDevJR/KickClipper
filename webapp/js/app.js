@@ -101,11 +101,22 @@ async function checkCapabilities() {
   const extra = [];
   if (opts.webgpu) for (const [id, label] of Object.entries(WEBLLM_MODELS)) extra.push(`<option value="webllm:${id}">${esc(label)}</option>`);
   if (opts.chrome) extra.push(`<option value="chrome">IA integrada de Chrome</option>`);
+  for (const name of opts.ollama || []) extra.push(`<option value="ollama:${esc(name)}">${esc(name)} · Ollama (tu PC)</option>`);
   lsel.insertAdjacentHTML("beforeend", extra.join(""));
   lsel.value = store.get("llm", "");
   if (!lsel.value) lsel.value = "";
-  setLed("gear-ai", opts.webgpu || opts.chrome);
-  $("d-ai").textContent = opts.chrome ? "Chrome IA / WebLLM" : opts.webgpu ? "WebLLM (descarga ~1 GB)" : "sin GPU: solo señales";
+  const nOllama = opts.ollama?.length || 0;
+  setLed("gear-ai", opts.webgpu || opts.chrome || nOllama > 0);
+  $("d-ai").textContent = nOllama ? `Ollama: ${nOllama} modelo${nOllama === 1 ? "" : "s"} de tu PC`
+    : opts.chrome ? "Chrome IA / WebLLM" : opts.webgpu ? "WebLLM (descarga ~1 GB)" : "sin GPU: solo señales";
+  const hint = $("ollama-hint");
+  if (opts.ollama === null) {
+    hint.querySelector("code").textContent = `OLLAMA_ORIGINS=${location.origin}`;
+    hint.hidden = false;
+  } else if (!nOllama) {
+    hint.innerHTML = "Ollama está abierto pero no tiene modelos: instala uno con <code>ollama pull qwen3:8b</code> y recarga.";
+    hint.hidden = false;
+  }
 }
 
 function setLed(id, ok) {
@@ -243,7 +254,9 @@ export async function run() {
     const llmChoice = $("llm-input").value;
     if (llmChoice) {
       try {
-        const [kind, id] = llmChoice.split(":");
+        // los nombres de Ollama llevan ":" (qwen3:8b): solo se corta en el primero
+        const cut = llmChoice.indexOf(":");
+        const [kind, id] = cut < 0 ? [llmChoice, undefined] : [llmChoice.slice(0, cut), llmChoice.slice(cut + 1)];
         llm = await createLLM(kind, { model: id, limits: state.limits, onProgress: (f, m) => setStage("select", f * 0.5, m) });
       } catch (err) {
         console.warn("IA local no disponible", err);
@@ -615,7 +628,7 @@ function refreshModal(clip) {
   const chips = [];
   if (clip.category) chips.push(`<span class="chip">${esc(clip.category)}</span>`);
   if (clip.layoutUsed) chips.push(`<span class="chip">encuadre: ${esc(LAYOUT_LABEL[clip.layoutUsed] || clip.layoutUsed)}</span>`);
-  if (clip.llmScores) chips.push(`<span class="chip">IA · gancho ${clip.llmScores.hook} · se entiende ${clip.llmScores.standalone} · remate ${clip.llmScores.payoff}</span>`);
+  if (clip.llmScores) chips.push(`<span class="chip">IA${clip.llmScores.model ? ` (${esc(clip.llmScores.model)})` : ""} · gancho ${clip.llmScores.hook} · se entiende ${clip.llmScores.standalone} · remate ${clip.llmScores.payoff}</span>`);
   if (clip.status === "error") chips.push(`<span class="chip">error: ${esc(clip.error)}</span>`);
   $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
   $("m-reason").textContent = clip.reason || "";

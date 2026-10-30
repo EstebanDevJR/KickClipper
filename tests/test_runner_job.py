@@ -54,3 +54,21 @@ def test_full_job(tmp_path, ffmpeg, monkeypatch):
     # cachés para reintentos baratos
     wd = runner.job_dir(job["id"])
     assert (wd / "transcript.json").exists() and (wd / "features.npz").exists()
+
+
+def test_recover_after_restart(monkeypatch):
+    queued = []
+    monkeypatch.setattr(runner, "enqueue", queued.append)
+    stuck = db.create_job("https://kick.com/canal/videos/a")
+    db.update_job(stuck["id"], status="transcribing")
+    waiting = db.create_job("https://kick.com/canal/videos/b")
+    clip = db.create_clip(stuck["id"], start=0.0, end=20.0, status="rendering")
+
+    runner.recover()
+
+    job = db.get_job(stuck["id"])
+    assert job["status"] == "error" and "reintentar" in job["error"]
+    assert waiting["id"] in queued and stuck["id"] not in queued
+    assert db.get_clip(clip["id"])["status"] == "candidate"
+    for j in (stuck, waiting):
+        db.delete_job(j["id"])

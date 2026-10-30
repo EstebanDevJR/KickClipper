@@ -176,7 +176,7 @@ export async function detect(segments, excitement, duration, { chat = null, chan
       try { data = await llm.score(w, ctx, channel); } catch (err) { console.warn("LLM falló", err); }
       onProgress?.((n + 1) / Math.min(shortlist.length, maxLlm), `IA evaluando momento ${n + 1}`);
     }
-    if (data) { applyLlm(w, data); llmOk++; } else heuristicMetadata(w, ctx, channel);
+    if (data) { applyLlm(w, data); w.llmScores.model = llm.name; llmOk++; } else heuristicMetadata(w, ctx, channel);
   }
 
   for (const w of shortlist) { refine(w, ctx); heuristic(w, ctx); }

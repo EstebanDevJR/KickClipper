@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2300e701'/><text x='50' y='68' font-size='52' text-anchor='middle' font-family='Arial Black'>✂</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><clipPath id='l'><polygon points='0,0 40.5,0 18.5,64 0,64'/></clipPath><clipPath id='r'><polygon points='43.5,0 64,0 64,64 21.5,64'/></clipPath></defs><rect width='64' height='64' rx='15' fill='%2353fc18'/><g fill='%23051005'><path clip-path='url(%23l)' d='M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z'/><path clip-path='url(%23r)' transform='translate(2 -2.5)' d='M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z'/></g></svg>">
 <script type="importmap">
 {
   "imports": {
@@ -24,7 +24,16 @@
 
 <aside class="rack">
   <div class="brand">
-    <div class="brand-mark">K<span>C</span></div>
+    <div class="brand-mark">
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <clipPath id="cut-l"><polygon points="0,0 40.5,0 18.5,64 0,64"/></clipPath>
+          <clipPath id="cut-r"><polygon points="43.5,0 64,0 64,64 21.5,64"/></clipPath>
+        </defs>
+        <path class="logo-l" clip-path="url(#cut-l)" d="M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z"/>
+        <path class="logo-r" clip-path="url(#cut-r)" d="M20 13.5c0-2.3 2.5-3.8 4.5-2.6l26 18.6c1.8 1.2 1.8 3.8 0 5L24.5 53.1c-2 1.2-4.5-.3-4.5-2.6z"/>
+      </svg>
+    </div>
     <div class="brand-name">KICK<b>CLIPPER</b></div>
     <div class="brand-sub">versión web · 100 % en tu equipo</div>
   </div>
@@ -125,6 +134,7 @@
       <button class="btn-go" id="go-btn">CLIPEAR</button>
       <span class="opt-hint">Usa solo contenido propio o con permiso del creador.</span>
     </div>
+    <p class="hint" id="ollama-hint" hidden>¿Tienes modelos en <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a>? Úsalos aquí: cierra Ollama y ábrelo con <code></code> (variable de entorno) y recarga la página. Todo sigue en tu equipo.</p>
   </section>
 
   <section class="run" id="run" hidden>

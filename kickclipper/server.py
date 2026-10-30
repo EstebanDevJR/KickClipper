@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import db, streamers
 from .config import settings
 from .events import bus
-from .pipeline import renderer, runner, subtitles, vision
+from .pipeline import highlights, renderer, runner, subtitles, vision
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -26,6 +26,7 @@ WEB_DIR = Path(__file__).parent / "web"
 async def _startup() -> None:
     bus.attach_loop(asyncio.get_running_loop())
     db.get_conn()
+    runner.recover()
 
 
 # ---------- Modelos ----------
@@ -35,6 +36,7 @@ class NewJob(BaseModel):
     sections: str | None = None     # "HH:MM:SS-HH:MM:SS" opcional
     auto_render: int = 3
     formats: list[str] | None = None  # ["short"], ["video"] o ambos
+    llm_model: str | None = None      # modelo de Ollama instalado; "none" = sin IA
 
 
 class RenderRequest(BaseModel):
@@ -72,6 +74,7 @@ def api_create_job(body: NewJob):
     job = db.create_job(body.url, {
         "sections": body.sections, "auto_render": body.auto_render,
         "formats": formats,
+        "llm_model": (body.llm_model or "").strip()[:200] or None,
     })
     runner.enqueue(job["id"])
     return job
@@ -182,25 +185,18 @@ def api_clip_thumb(clip_id: str):
 async def api_status():
     """Comprueba dependencias externas (Ollama, ffmpeg)."""
     import shutil as sh
-    import httpx
 
     ffmpeg_ok = (
         Path(settings.ffmpeg_bin).exists() if "/" in settings.ffmpeg_bin
         else sh.which(settings.ffmpeg_bin) is not None
     )
-    ollama_ok, models = False, []
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{settings.ollama_url}/api/tags")
-            ollama_ok = r.status_code == 200
-            models = [m["name"] for m in r.json().get("models", [])]
-    except Exception:
-        pass
+    models = await asyncio.to_thread(highlights.ollama_models)
     return {
         "ffmpeg": ffmpeg_ok,
-        "ollama": ollama_ok,
-        "ollama_models": models,
-        "ollama_model": settings.ollama_model,
+        "ollama": models is not None,
+        "ollama_models": models or [],
+        # el de la configuración si está instalado; si no, el que se usará en su lugar
+        "ollama_model": highlights.pick_model(settings.ollama_model, models or []) or settings.ollama_model,
         "whisper_engine": settings.whisper_engine,
         "whisper_model": settings.whisper_model
         if settings.whisper_engine == "mlx" else settings.faster_whisper_model,
