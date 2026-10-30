@@ -45,10 +45,60 @@ async function refreshStatus() {
     $("vision-detail").textContent = s.vision ? "facecam · hablante activo" : "instala opencv-python-headless";
     $("chat-detail").textContent = s.chat_signal ? "picos de mensajes" : "desactivado (KC_CHAT_SIGNAL)";
     $("whisper-detail").textContent = `${s.whisper_engine} · ${s.whisper_model}`;
-    $("ollama-detail").textContent = s.ollama
-      ? s.ollama_model : "servidor apagado — ejecuta `ollama serve`";
+    const models = s.ollama_models || [];
+    $("ollama-detail").textContent = !s.ollama ? "servidor apagado — ejecuta `ollama serve`"
+      : !models.length ? "sin modelos — ejecuta `ollama pull qwen3:8b`"
+      : `${models.length} modelo${models.length === 1 ? "" : "s"} instalado${models.length === 1 ? "" : "s"}`;
+    fillModels(models, s.ollama_model);
+    showSuggestion(s, models);
     streamerSocials = s.streamer_socials || {};
   } catch { /* servidor aún arrancando */ }
+}
+
+/** Modelo recomendado para la memoria del equipo, con botón para instalarlo. */
+function showSuggestion(s, models) {
+  const box = $("model-suggest");
+  const rec = s.recommended_model;
+  const installed = models.some((m) => m === rec || m === `${rec}:latest`);
+  box.hidden = !s.ollama || !rec || (installed && !s.ollama_pulling);
+  if (box.hidden) return;
+  $("suggest-name").textContent = rec;
+  $("suggest-why").textContent = s.recommended_reason || "";
+  if (s.ollama_pulling) setPullState({ name: s.ollama_pulling, status: "descargando…" });
+}
+
+function setPullState(ev) {
+  const busy = !ev.done;
+  $("suggest-btn").disabled = busy;
+  $("suggest-btn").textContent = busy ? "Instalando…" : ev.error ? "⟳ Reintentar" : "⬇ Instalar";
+  document.querySelector(".suggest-bar").hidden = !busy;
+  if (typeof ev.progress === "number") $("suggest-fill").style.width = `${Math.round(ev.progress * 100)}%`;
+  const pct = typeof ev.progress === "number" && busy ? ` ${Math.round(ev.progress * 100)}%` : "";
+  $("suggest-state").textContent = ev.error ? `error: ${ev.error}` : `${ev.status || ""}${pct}`;
+}
+
+async function installSuggested() {
+  const name = $("suggest-name").textContent;
+  setPullState({ name, status: "empezando…" });
+  try {
+    await api("/models/pull", { method: "POST", body: JSON.stringify({ name }) });
+  } catch (err) {
+    setPullState({ name, error: err.message, done: true });
+  }
+}
+
+/** Selector con todos los modelos de Ollama instalados; recuerda la elección. */
+function fillModels(models, fallback) {
+  const sel = $("model-input");
+  const key = [...models].join("|");
+  if (sel.dataset.key === key) return;  // sin cambios: no tocar lo que el usuario eligió
+  sel.dataset.key = key;
+  let saved = null;
+  try { saved = localStorage.getItem("kc-model"); } catch { /* sin almacenamiento */ }
+  sel.innerHTML = models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")
+    + `<option value="none">sin IA (solo señales)</option>`;
+  sel.value = saved && (saved === "none" || models.includes(saved)) ? saved
+    : models.includes(fallback) ? fallback : (models[0] || "none");
 }
 
 function setLed(gearId, ok) {
@@ -203,7 +253,7 @@ function renderSignals(clip) {
   if (used) chips.push(`<span class="chip">encuadre: ${esc(LAYOUT_LABEL[used] || used)}</span>`);
   if (meta.llm_scores?.hook !== undefined) {
     const l = meta.llm_scores;
-    chips.push(`<span class="chip">IA · gancho ${l.hook} · se entiende ${l.standalone} · remate ${l.payoff}</span>`);
+    chips.push(`<span class="chip">IA${l.model ? ` (${esc(l.model)})` : ""} · gancho ${l.hook} · se entiende ${l.standalone} · remate ${l.payoff}</span>`);
   }
   $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
 }
@@ -393,6 +443,7 @@ $("job-form").addEventListener("submit", async (e) => {
         sections: $("sections-input").value.trim() || null,
         auto_render: parseInt($("autorender-input").value, 10),
         formats: $("formats-input").value.split(","),
+        llm_model: $("model-input").value || null,
       }),
     });
     // el evento SSE del worker puede llegar antes que esta respuesta:
@@ -438,6 +489,14 @@ function connectSSE() {
       patchClip(ev.clip);
       renderClips();
       if (modalClip && modalClip.id === ev.clip.id) { modalClip = ev.clip; updateModalVideo(ev.clip); }
+    } else if (ev.type === "model_pull") {
+      setPullState(ev);
+      if (ev.done && !ev.error) {
+        // recién instalado: se elige directamente
+        try { localStorage.setItem("kc-model", ev.name); } catch { /* sin almacenamiento */ }
+        $("model-input").dataset.key = "";
+        refreshStatus();
+      }
     } else if (ev.type === "clip_progress" && modalClip && ev.clip_id === modalClip.id) {
       $("m-progress").hidden = false;
       $("m-progress-bar").style.width = `${Math.round(ev.progress * 100)}%`;
@@ -467,6 +526,10 @@ function updateJobProgress(ev) {
 (async function init() {
   refreshStatus();
   setInterval(refreshStatus, 15000);
+  $("suggest-btn").addEventListener("click", installSuggested);
+  $("model-input").addEventListener("change", (e) => {
+    try { localStorage.setItem("kc-model", e.target.value); } catch { /* sin almacenamiento */ }
+  });
   connectSSE();
   jobs = await api("/jobs");
   renderJobs();

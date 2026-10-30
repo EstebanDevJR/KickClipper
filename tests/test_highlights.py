@@ -75,3 +75,36 @@ def test_video_windows_long():
     exc = np.full(1200, 0.2)
     clips = highlights.detect(segs, exc, 1200.0, formats=("video",))
     assert clips and all(300 <= c["end"] - c["start"] <= 600 for c in clips)
+
+
+def test_pick_model_uses_any_installed_model(monkeypatch):
+    monkeypatch.setattr(highlights.settings, "ollama_model", "qwen3:8b")
+    installed = ["llama3.2:latest", "gemma3:4b", "qwen3:8b"]
+    assert highlights.pick_model("gemma3:4b", installed) == "gemma3:4b"
+    assert highlights.pick_model("llama3.2", installed) == "llama3.2:latest"
+    # el pedido no está instalado: el de la configuración, y si no, el primero
+    assert highlights.pick_model("mistral:7b", installed) == "qwen3:8b"
+    assert highlights.pick_model(None, ["phi4:14b"]) == "phi4:14b"
+    assert highlights.pick_model("gemma3:4b", []) == ""
+
+
+def test_embedding_models_are_not_offered():
+    assert highlights._is_text_model({"name": "qwen3:8b", "details": {"family": "qwen3"}})
+    assert not highlights._is_text_model({"name": "nomic-embed-text:latest"})
+    assert not highlights._is_text_model({"name": "mxbai:latest", "details": {"families": ["bert"]}})
+
+
+def test_strip_think_keeps_only_the_json():
+    raw = '<think>pienso…{"x": 1}</think>\nAquí va: {"score": 7}'
+    assert highlights._strip_think(raw) == '{"score": 7}'
+    assert highlights._strip_think("sin json") == "{}"
+
+
+def test_detect_without_llm_when_disabled(monkeypatch):
+    called = []
+    monkeypatch.setattr(highlights._Ollama, "available", lambda self: called.append(1) or True)
+    segs = _segments(special={100: "¡NO PUEDE SER! jajaja qué locura"})
+    exc = np.full(600, 0.1)
+    exc[300:306] = 1.0
+    clips = highlights.detect(segs, exc, 600.0, formats=("short",), llm_model=highlights.NO_LLM)
+    assert clips and not called

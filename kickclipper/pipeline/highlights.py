@@ -69,12 +69,15 @@ def detect(
     formats: tuple[str, ...] | list[str] = ("short",),
     chat: np.ndarray | None = None,
     channel: str = "",
+    llm_model: str | None = None,
 ) -> list[dict]:
     """Devuelve clips candidatos (con su formato) ordenados por puntuación final.
 
     Cada formato tiene su propio rango de duración: shorts de hasta 1 minuto
     (configurable) y videos de 5 a 10 minutos, así que se generan por separado.
     chat: curva 0..1 de picos del chat (chat.spike_curve) o None.
+    llm_model: modelo de Ollama a usar (cualquiera instalado); None = el de la
+    configuración, "none" = sin LLM, solo señales automáticas.
     """
     if not segments:
         return []
@@ -95,11 +98,13 @@ def detect(
     if not shortlist:
         return []
 
-    llm = _Ollama()
-    if llm.available():
+    llm = _Ollama(llm_model)
+    if llm_model != NO_LLM and llm.available():
+        log.info("Puntuando con el modelo de Ollama %s", llm.model)
         _llm_score(shortlist, ctx, llm, channel, on_progress)
     else:
-        log.warning("Ollama no disponible: se usan solo señales automáticas")
+        if llm_model != NO_LLM:
+            log.warning("Ollama no disponible: se usan solo señales automáticas")
         for w in shortlist:
             _heuristic_metadata(w, ctx, channel)
 
@@ -367,36 +372,88 @@ _SCHEMA = {
 }
 
 
+NO_LLM = "none"  # llm_model para desactivar el LLM en un trabajo
+
+
+def _is_text_model(m: dict) -> bool:
+    """Descarta los modelos de embeddings (no generan texto)."""
+    details = m.get("details") or {}
+    families = [details.get("family") or "", *(details.get("families") or [])]
+    return "embed" not in m.get("name", "").lower() and not any("bert" in f.lower() for f in families)
+
+
+def ollama_models(timeout: float = 3) -> list[str] | None:
+    """Modelos de texto instalados en Ollama, o None si el servidor no responde."""
+    try:
+        r = httpx.get(f"{settings.ollama_url}/api/tags", timeout=timeout)
+        r.raise_for_status()
+        return [m["name"] for m in r.json().get("models", []) if m.get("name") and _is_text_model(m)]
+    except Exception:
+        return None
+
+
+def pick_model(requested: str | None, installed: list[str]) -> str:
+    """El modelo pedido si está instalado; si no, el de la configuración o el primero."""
+    for want in (requested, settings.ollama_model):
+        if not want or want == NO_LLM:
+            continue
+        if want in installed:
+            return want
+        if ":" not in want and f"{want}:latest" in installed:
+            return f"{want}:latest"
+    return installed[0] if installed else ""
+
+
 class _Ollama:
     """Cliente mínimo con corte rápido: tras 2 fallos seguidos deja de intentarlo."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
         self.fails = 0
+        self.requested = model
+        self.model = ""
+        self.think = True  # manda think=False; se quita si el modelo no lo admite
 
     def available(self) -> bool:
-        try:
-            r = httpx.get(f"{settings.ollama_url}/api/tags", timeout=3)
-            return r.status_code == 200
-        except Exception:
+        installed = ollama_models()
+        if not installed:
+            if installed is not None:
+                log.warning("Ollama no tiene modelos de texto instalados (ollama pull <modelo>)")
             return False
+        self.model = pick_model(self.requested, installed)
+        if self.requested and self.requested != self.model:
+            log.warning("El modelo %s no está instalado; se usa %s", self.requested, self.model)
+        return True
+
+    def warm_up(self, client: httpx.Client, num_ctx: int = 4096) -> None:
+        """Carga el modelo en memoria (prompt vacío) antes de la primera consulta.
+        Con el mismo num_ctx que la consulta: si cambia, Ollama lo recarga."""
+        try:
+            client.post(f"{settings.ollama_url}/api/generate",
+                        json={"model": self.model, "keep_alive": "15m",
+                              "options": {"num_ctx": num_ctx}}).raise_for_status()
+        except Exception:
+            log.warning("Ollama no pudo cargar %s", self.model)
 
     def ask(self, client: httpx.Client, prompt: str, num_ctx: int = 4096) -> dict:
         if self.fails >= 2:
             return {}
+        body = {
+            "model": self.model or settings.ollama_model,
+            "prompt": prompt,
+            "stream": False,
+            "format": _SCHEMA,
+            "options": {"temperature": 0.3, "num_predict": 450, "num_ctx": num_ctx},
+            "keep_alive": "15m",
+        }
         try:
-            resp = client.post(
-                f"{settings.ollama_url}/api/generate",
-                json={
-                    "model": settings.ollama_model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": _SCHEMA,
-                    "options": {"temperature": 0.3, "num_predict": 450, "num_ctx": num_ctx},
-                    "think": False,
-                },
-            )
+            resp = client.post(f"{settings.ollama_url}/api/generate",
+                               json={**body, "think": False} if self.think else body)
+            if resp.status_code == 400 and self.think and "think" in resp.text.lower():
+                # modelos sin modo de razonamiento rechazan el campo "think"
+                self.think = False
+                resp = client.post(f"{settings.ollama_url}/api/generate", json=body)
             resp.raise_for_status()
-            data = json.loads(resp.json().get("response", "{}"))
+            data = json.loads(_strip_think(resp.json().get("response", "{}")))
             self.fails = 0
             return data if isinstance(data, dict) else {}
         except Exception:
@@ -405,10 +462,20 @@ class _Ollama:
             return {}
 
 
+def _strip_think(text: str) -> str:
+    """Quita un bloque <think>…</think> que algunos modelos escriben igualmente."""
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if start >= 0 and end > start else "{}"
+
+
 def _llm_score(windows: list[dict], ctx: _Context, llm: _Ollama, channel: str,
                on_progress: ProgressFn | None) -> None:
     total = len(windows)
     with httpx.Client(timeout=settings.ollama_timeout) as client:
+        if on_progress:
+            on_progress(0.0, f"Cargando {llm.model} en Ollama (la primera vez puede tardar)")
+        llm.warm_up(client, num_ctx=8192 if windows[0]["format"] == "video" else 4096)
         for n, w in enumerate(windows):
             is_video = w["format"] == "video"
             sig = _signals_text(w, ctx)
@@ -426,8 +493,10 @@ def _llm_score(windows: list[dict], ctx: _Context, llm: _Ollama, channel: str,
                 data = llm.ask(client, prompt)
                 w["_line_index"] = index
             _apply_llm(w, data, ctx, channel)
+            if w.get("llm_ok"):
+                w["llm_scores"]["model"] = llm.model
             if on_progress:
-                on_progress((n + 1) / total, f"IA evaluando momento {n + 1}/{total}")
+                on_progress((n + 1) / total, f"IA ({llm.model}) evaluando momento {n + 1}/{total}")
 
 
 def _apply_llm(w: dict, data: dict, ctx: _Context, channel: str) -> None:

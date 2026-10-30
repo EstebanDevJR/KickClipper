@@ -1,5 +1,5 @@
-// Detección de momentos clipeables (port de kickclipper/pipeline/highlights.py,
-// solo formato short). Ver docs/GUIA_CLIPS_VIRALES.md §2-3.
+// Detección de momentos clipeables (port de kickclipper/pipeline/highlights.py):
+// shorts 9:16 y videos 16:9 de 5-10 min. Ver docs/GUIA_CLIPS_VIRALES.md §2-3.
 //
 // 1. Curva de momentos: excitación del audio + picos del chat (si hay).
 // 2. Candidatas: ventanas preparación → pico → reacción y ventanas deslizantes,
@@ -10,6 +10,9 @@
 import { findPeaks, percentile, median, smooth } from "./signals.js";
 
 export const LIMITS = { min: 15, max: 60, target: 40 };
+export const VIDEO_LIMITS = { min: 300, max: 600, target: 420 };
+/** Los límites de duración deciden el formato: 5 min o más es un video 16:9. */
+export const formatOf = (limits) => (limits.min >= VIDEO_LIMITS.min ? "video" : "short");
 
 const REACTION_RE = /(jaja|jeje|kkkk|xd+|lmao|lol|no me jodas|no puede ser|qué (es esto|pasó|haces)|increíble|insano|brutal|[eé]pico|hostia|wtf|oh my god|omg|dios mío|what the|clip|clipealo|clipéalo|me muero|literal|na+h?\b|bro+\b|loco\b|gan[éeoa]|perd[íio]|mat[éeoa]|ace\b|clutch|victoria|derrota|no no no|vamos+|let'?s go|holy|nooo+|s[ií]{2,}|qu[eé]{2,}|madre m[ií]a|imposible|locura|est[aá]s loco|meu deus|caralho|nossa)/gi;
 const EXCLAIM_RE = /[!?¡¿]/g;
@@ -69,6 +72,35 @@ export function buildWindows(segments, limits = LIMITS) {
   return windows;
 }
 
+/**
+ * Ventanas de video (5-10 min): una ventana por cada duración objetivo,
+ * empezando cada ~15 s. Probar todas las combinaciones de frases sería
+ * cuadrático con cientos de frases por ventana.
+ */
+export function buildVideoWindows(segments, limits = VIDEO_LIMITS) {
+  const { min, max, target } = limits;
+  const goals = [min + 30, target, max - 30];
+  const windows = [];
+  let lastStart = -Infinity;
+  for (let i = 0; i < segments.length; i++) {
+    const start = segments[i].start;
+    if (start - lastStart < 15) continue;
+    lastStart = start;
+    const best = goals.map(() => -1);
+    for (let k = i; k < segments.length; k++) {
+      if (k > i && segments[k].start - segments[k - 1].end > 8) break;
+      const length = segments[k].end - start;
+      if (length > max) break;
+      if (length < min) continue;
+      goals.forEach((g, j) => {
+        if (best[j] < 0 || Math.abs(length - g) < Math.abs(segments[best[j]].end - start - g)) best[j] = k;
+      });
+    }
+    for (const k of new Set(best)) if (k >= 0) windows.push(makeWindow(segments, i, k, "video"));
+  }
+  return windows;
+}
+
 /** Ventanas preparación → pico → reacción alrededor de cada pico. */
 export function peakWindows(segments, ctx, limits = LIMITS) {
   const { min, max } = limits;
@@ -93,8 +125,8 @@ export function peakWindows(segments, ctx, limits = LIMITS) {
   return windows;
 }
 
-export function makeWindow(segments, i, k) {
-  return { start: segments[i].start, end: segments[k].end, i0: i, i1: k, segments: segments.slice(i, k + 1), format: "short" };
+export function makeWindow(segments, i, k, format = "short") {
+  return { start: segments[i].start, end: segments[k].end, i0: i, i1: k, segments: segments.slice(i, k + 1), format };
 }
 
 export function heuristic(w, ctx) {
@@ -162,8 +194,11 @@ export async function detect(segments, excitement, duration, { chat = null, chan
   maxClips = 8, maxLlm = 16, limits = LIMITS, onProgress = null } = {}) {
   if (!segments.length) return [];
   const ctx = new Context(segments, excitement, chat, duration, limits);
-  let windows = buildWindows(segments, limits).concat(peakWindows(segments, ctx, limits));
+  const video = formatOf(limits) === "video";
+  let windows = video ? buildVideoWindows(segments, limits)
+    : buildWindows(segments, limits).concat(peakWindows(segments, ctx, limits));
   if (!windows.length) return [];
+  if (video) maxLlm = Math.min(maxLlm, 6);  // prompts largos: menos consultas
   windows.forEach((w) => heuristic(w, ctx));
   windows.sort((a, b) => b.heuristic - a.heuristic);
   const shortlist = dedupe(windows, 0.5).slice(0, Math.max(maxLlm, maxClips));
@@ -176,7 +211,7 @@ export async function detect(segments, excitement, duration, { chat = null, chan
       try { data = await llm.score(w, ctx, channel); } catch (err) { console.warn("LLM falló", err); }
       onProgress?.((n + 1) / Math.min(shortlist.length, maxLlm), `IA evaluando momento ${n + 1}`);
     }
-    if (data) { applyLlm(w, data); llmOk++; } else heuristicMetadata(w, ctx, channel);
+    if (data) { applyLlm(w, data); w.llmScores.model = llm.name; llmOk++; } else heuristicMetadata(w, ctx, channel);
   }
 
   for (const w of shortlist) { refine(w, ctx); heuristic(w, ctx); }
@@ -312,6 +347,33 @@ function trimTail(w, ctx, min) {
     k--;
     setBounds(w, segs, i, k);
   }
+}
+
+/**
+ * Regiones a transcribir para videos de 5-10 min: los tramos continuos de
+ * ~11 min con más actividad media (audio + chat), sin solaparse, hasta el
+ * tope de minutos. Un video necesita la transcripción entera del tramo.
+ */
+export function videoRegions(moment, duration, { maxMinutes = 30, limits = VIDEO_LIMITS } = {}) {
+  if (duration <= maxMinutes * 60) return [[0, duration]];
+  const win = Math.min(limits.max + 60, duration);
+  const count = Math.max(1, Math.floor((maxMinutes * 60) / win));
+  const n = Math.min(moment.length, Math.ceil(duration));
+  const prefix = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) prefix[i + 1] = prefix[i] + moment[i];
+  const mean = (s) => (prefix[Math.min(n, s + win)] - prefix[Math.min(n, s)]) / win;
+  const regions = [];
+  for (let c = 0; c < count; c++) {
+    let best = -1, bestV = -Infinity;
+    for (let s = 0; s + win <= duration; s += 10) {
+      if (regions.some(([a, b]) => s < b && s + win > a)) continue;
+      const v = mean(Math.floor(s));
+      if (v > bestV) { bestV = v; best = s; }
+    }
+    if (best < 0) break;
+    regions.push([best, best + win]);
+  }
+  return mergeRegions(regions);
 }
 
 /**

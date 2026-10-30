@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -11,10 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from . import db, streamers
+from . import db, hardware, streamers
 from .config import settings
 from .events import bus
-from .pipeline import renderer, runner, subtitles, vision
+from .pipeline import highlights, renderer, runner, subtitles, vision
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -26,6 +29,7 @@ WEB_DIR = Path(__file__).parent / "web"
 async def _startup() -> None:
     bus.attach_loop(asyncio.get_running_loop())
     db.get_conn()
+    runner.recover()
 
 
 # ---------- Modelos ----------
@@ -35,6 +39,7 @@ class NewJob(BaseModel):
     sections: str | None = None     # "HH:MM:SS-HH:MM:SS" opcional
     auto_render: int = 3
     formats: list[str] | None = None  # ["short"], ["video"] o ambos
+    llm_model: str | None = None      # modelo de Ollama instalado; "none" = sin IA
 
 
 class RenderRequest(BaseModel):
@@ -55,6 +60,10 @@ class RenderRequest(BaseModel):
     clear_cam: bool | None = None     # olvida la cámara marcada a mano
 
 
+class PullRequest(BaseModel):
+    name: str
+
+
 # ---------- Jobs ----------
 
 @app.get("/api/jobs")
@@ -72,6 +81,7 @@ def api_create_job(body: NewJob):
     job = db.create_job(body.url, {
         "sections": body.sections, "auto_render": body.auto_render,
         "formats": formats,
+        "llm_model": (body.llm_model or "").strip()[:200] or None,
     })
     runner.enqueue(job["id"])
     return job
@@ -182,25 +192,20 @@ def api_clip_thumb(clip_id: str):
 async def api_status():
     """Comprueba dependencias externas (Ollama, ffmpeg)."""
     import shutil as sh
-    import httpx
 
     ffmpeg_ok = (
         Path(settings.ffmpeg_bin).exists() if "/" in settings.ffmpeg_bin
         else sh.which(settings.ffmpeg_bin) is not None
     )
-    ollama_ok, models = False, []
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{settings.ollama_url}/api/tags")
-            ollama_ok = r.status_code == 200
-            models = [m["name"] for m in r.json().get("models", [])]
-    except Exception:
-        pass
+    models = await asyncio.to_thread(highlights.ollama_models)
     return {
         "ffmpeg": ffmpeg_ok,
-        "ollama": ollama_ok,
-        "ollama_models": models,
-        "ollama_model": settings.ollama_model,
+        "ollama": models is not None,
+        "ollama_models": models or [],
+        # el de la configuración si está instalado; si no, el que se usará en su lugar
+        "ollama_model": highlights.pick_model(settings.ollama_model, models or []) or settings.ollama_model,
+        "ollama_pulling": _pulling,
+        **await asyncio.to_thread(hardware.summary),
         "whisper_engine": settings.whisper_engine,
         "whisper_model": settings.whisper_model
         if settings.whisper_engine == "mlx" else settings.faster_whisper_model,
@@ -215,6 +220,58 @@ async def api_status():
         "streamer_socials": {ch: streamers.socials(ch) for ch in settings.streamer_socials},
         "output_dir": str(settings.output_dir),
     }
+
+
+# ---------- Modelos de Ollama ----------
+
+_pulling: str | None = None  # modelo que se está descargando (uno a la vez)
+_MODEL_NAME = re.compile(r"^[\w.\-/]+(:[\w.\-]+)?$")
+
+
+@app.post("/api/models/pull")
+def api_pull_model(body: PullRequest):
+    """Descarga un modelo con `ollama pull`; el progreso llega por /api/events."""
+    global _pulling
+    name = body.name.strip()
+    if not _MODEL_NAME.match(name) or len(name) > 200:
+        raise HTTPException(400, "Nombre de modelo no válido")
+    if _pulling:
+        raise HTTPException(409, f"Ya se está descargando {_pulling}")
+    _pulling = name
+    threading.Thread(target=_pull, args=(name,), daemon=True, name="kc-pull").start()
+    return {"ok": True}
+
+
+def _pull(name: str) -> None:
+    global _pulling
+    import httpx
+
+    def send(**fields) -> None:
+        bus.publish({"type": "model_pull", "name": name, **fields})
+
+    try:
+        with httpx.stream("POST", f"{settings.ollama_url}/api/pull",
+                          json={"model": name, "stream": True}, timeout=httpx.Timeout(30, read=600)) as r:
+            r.raise_for_status()
+            last = -1.0
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                msg = json.loads(line)
+                if msg.get("error"):
+                    raise RuntimeError(msg["error"])
+                total, done = msg.get("total"), msg.get("completed")
+                frac = done / total if total and done else None
+                # un evento por cada 1 % como mucho: la descarga manda cientos por segundo
+                if frac is None or frac - last >= 0.01 or frac >= 1:
+                    last = frac if frac is not None else last
+                    send(status=msg.get("status", ""), progress=frac)
+        send(status="listo", progress=1.0, done=True)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Fallo descargando %s", name)
+        send(status="error", error=str(exc)[:300], done=True)
+    finally:
+        _pulling = None
 
 
 @app.get("/api/events")

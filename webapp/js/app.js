@@ -7,18 +7,18 @@ import { openSource } from "./source.js";
 import { analyzeAudio, fineEnergy } from "./audio.js";
 import { chatActivity, spikeCurve } from "./chat.js";
 import { MODELS, defaultDevice, setTranscriber, transcribeRegions } from "./transcribe.js";
-import { LIMITS, detect, regionsToTranscribe } from "./highlights.js";
+import { LIMITS, VIDEO_LIMITS, detect, formatOf, regionsToTranscribe, videoRegions } from "./highlights.js";
 import { WEBLLM_MODELS, createLLM, llmOptions } from "./llm.js";
 import { analyzeClip, plan as visionPlan, planToOutput, speakerAt, splitFromRect } from "./vision.js";
 import { buildTimeline } from "./timeline.js";
 import { buildCaptionTrack, loadFonts } from "./captions.js";
-import { createCompositor } from "./compositor.js";
+import { VIDEO_H, VIDEO_W, createCompositor } from "./compositor.js";
 import { chooseOutput, renderClip, thumbnail } from "./render.js";
 import { KickBridge, bookmarklet, readKickPayload } from "./kickbridge.js";
 
 const $ = (id) => document.getElementById(id);
 const STAGES = ["open", "audio", "transcribe", "select", "render"];
-const LAYOUT_LABEL = { split: "cámara + gameplay", speaker: "foco en quien habla", follow: "sigue a la persona", blur: "fondo difuminado", crop: "recorte central" };
+const LAYOUT_LABEL = { fit: "16:9 completo", split: "cámara + gameplay", speaker: "foco en quien habla", follow: "sigue a la persona", blur: "fondo difuminado", crop: "recorte central" };
 const SIGNAL_LABEL = { audio: "audio", chat: "chat", hook: "gancho", reactions: "reacciones", density: "habla" };
 
 const state = {
@@ -57,6 +57,8 @@ async function init() {
   setupDropzone();
   setupSettings();
   setupModal();
+  // instalable como app y usable sin conexión (solo en https o localhost)
+  navigator.serviceWorker?.register("sw.js").catch((err) => console.warn("Service worker no registrado", err));
   $("go-btn").addEventListener("click", () => run().catch(() => {}));
   $("cancel-btn").addEventListener("click", () => state.abort?.abort());
   $("bookmarklet").href = bookmarklet(location.origin + location.pathname);
@@ -101,11 +103,22 @@ async function checkCapabilities() {
   const extra = [];
   if (opts.webgpu) for (const [id, label] of Object.entries(WEBLLM_MODELS)) extra.push(`<option value="webllm:${id}">${esc(label)}</option>`);
   if (opts.chrome) extra.push(`<option value="chrome">IA integrada de Chrome</option>`);
+  for (const name of opts.ollama || []) extra.push(`<option value="ollama:${esc(name)}">${esc(name)} · Ollama (tu PC)</option>`);
   lsel.insertAdjacentHTML("beforeend", extra.join(""));
   lsel.value = store.get("llm", "");
   if (!lsel.value) lsel.value = "";
-  setLed("gear-ai", opts.webgpu || opts.chrome);
-  $("d-ai").textContent = opts.chrome ? "Chrome IA / WebLLM" : opts.webgpu ? "WebLLM (descarga ~1 GB)" : "sin GPU: solo señales";
+  const nOllama = opts.ollama?.length || 0;
+  setLed("gear-ai", opts.webgpu || opts.chrome || nOllama > 0);
+  $("d-ai").textContent = nOllama ? `Ollama: ${nOllama} modelo${nOllama === 1 ? "" : "s"} de tu PC`
+    : opts.chrome ? "Chrome IA / WebLLM" : opts.webgpu ? "WebLLM (descarga ~1 GB)" : "sin GPU: solo señales";
+  const hint = $("ollama-hint");
+  if (opts.ollama === null) {
+    hint.querySelector("code").textContent = `OLLAMA_ORIGINS=${location.origin}`;
+    hint.hidden = false;
+  } else if (!nOllama) {
+    hint.innerHTML = "Ollama está abierto pero no tiene modelos: instala uno con <code>ollama pull qwen3:8b</code> y recarga.";
+    hint.hidden = false;
+  }
 }
 
 function setLed(id, ok) {
@@ -224,7 +237,10 @@ export async function run() {
     const chatCurve = spikeCurve(chat, exc.length);
     const moment = chatCurve ? exc.map((v, i) => 0.65 * v + 0.35 * chatCurve[i]) : exc;
     const depth = Number($("depth-input").value);
-    const regions = regionsToTranscribe(moment, b - a, { maxMinutes: depth });
+    const video = formatOf(state.limits) === "video";
+    // un video necesita su tramo entero transcrito; un short, solo los picos
+    const regions = video ? videoRegions(moment, b - a, { maxMinutes: depth, limits: state.limits })
+      : regionsToTranscribe(moment, b - a, { maxMinutes: depth });
     drawCurve(exc, chatCurve, regions);
 
     // 3. Transcripción (solo alrededor de los picos en VODs largos)
@@ -243,7 +259,9 @@ export async function run() {
     const llmChoice = $("llm-input").value;
     if (llmChoice) {
       try {
-        const [kind, id] = llmChoice.split(":");
+        // los nombres de Ollama llevan ":" (qwen3:8b): solo se corta en el primero
+        const cut = llmChoice.indexOf(":");
+        const [kind, id] = cut < 0 ? [llmChoice, undefined] : [llmChoice.slice(0, cut), llmChoice.slice(cut + 1)];
         llm = await createLLM(kind, { model: id, limits: state.limits, onProgress: (f, m) => setStage("select", f * 0.5, m) });
       } catch (err) {
         console.warn("IA local no disponible", err);
@@ -252,7 +270,8 @@ export async function run() {
     }
     const rel = segments.map((s) => ({ ...s, start: s.start - a, end: s.end - a, words: s.words.map((w) => ({ ...w, s: w.s - a, e: w.e - a })) }));
     const found = await detect(rel, exc, b - a, {
-      chat: chatCurve, channel: kick?.channel || "", llm, maxClips: Number($("clips-input").value),
+      chat: chatCurve, channel: kick?.channel || "", llm,
+      maxClips: video ? Math.min(Number($("clips-input").value), 4) : Number($("clips-input").value),
       limits: state.limits, onProgress: (f, m) => setStage("select", 0.5 + f * 0.5, m),
     });
     if (!found.length) throw new Error("No se encontraron momentos clipeables");
@@ -294,10 +313,13 @@ function toClip(w, offset, i) {
     start: w.start + offset, end: w.end + offset, score: w.final,
     title: w.title || "", hookText: w.hookText || "", description: w.description || "",
     hashtags: w.hashtags || [], keywords: w.keywords || [], category: w.category || "",
-    reason: w.reason || "", signals: w.signals || {}, llmScores: w.llmScores || null,
+    reason: w.reason || "", signals: w.signals || {}, llmScores: w.llmScores || null, format: w.format || "short",
     peak: w.peak != null ? w.peak + offset : null, words,
     transcript: w.segments.map((s) => s.text).join(" "),
-    opts: { layout: "auto", captionStyle: "viral", showHook: true, jumpcut: true, preview: false },
+    // los videos 16:9 van como en el stream: sin recortes, subtítulos ni gancho
+    opts: w.format === "video"
+      ? { layout: "fit", captionStyle: "none", showHook: false, jumpcut: false, preview: false }
+      : { layout: "auto", captionStyle: "viral", showHook: true, jumpcut: true, preview: false },
     status: "candidate", thumb: "", blobUrl: "", fileName: "", layoutUsed: "",
   };
 }
@@ -357,7 +379,9 @@ export async function renderCandidate(clip, overrides = {}, signal = null, onRun
   clip.opts = o;
   const start = Number(o.start ?? clip.start), end = Number(o.end ?? clip.end);
   const clipLen = end - start;
-  if (!(clipLen >= 3 && clipLen <= 185)) throw new Error("El clip debe durar entre 3 s y 3 min");
+  const video = clip.format === "video";
+  if (video && !(clipLen >= 3 && clipLen <= VIDEO_LIMITS.max + 20)) throw new Error("El video debe durar como mucho 10 min");
+  if (!video && !(clipLen >= 3 && clipLen <= 185)) throw new Error("El clip debe durar entre 3 s y 3 min");
   clip.status = "rendering";
   renderGrid();
   const progress = (f, m) => {
@@ -377,8 +401,10 @@ export async function renderCandidate(clip, overrides = {}, signal = null, onRun
 
     // Encuadre (análisis de caras cacheado por rango)
     let plan = {};
-    let resolved = o.layout;
-    if (o.camRect && ["auto", "split"].includes(o.layout)) {
+    let resolved = video ? "fit" : o.layout;
+    if (video) {
+      // 16:9: el fotograma entero, sin análisis de caras
+    } else if (o.camRect && ["auto", "split"].includes(o.layout)) {
       // cámara marcada a mano: manda sobre la detección automática
       plan = splitFromRect(o.camRect, src.width, src.height);
       resolved = "split";
@@ -402,8 +428,8 @@ export async function renderCandidate(clip, overrides = {}, signal = null, onRun
 
     // Línea de tiempo: jump cuts y cold open
     let energy = null;
-    if (o.jumpcut) { try { energy = await fineEnergy(src.analysisAudio, start, end, src.t0); } catch { energy = null; } }
-    const preview = o.preview && clip.peak != null && clip.peak - start > 6 && clip.peak - start < clipLen - 1
+    if (o.jumpcut && !video) { try { energy = await fineEnergy(src.analysisAudio, start, end, src.t0); } catch { energy = null; } }
+    const preview = o.preview && !video && clip.peak != null && clip.peak - start > 6 && clip.peak - start < clipLen - 1
       ? [clip.peak - start - 1.4, clip.peak - start + 0.9] : null;
     const tl = buildTimeline(clipLen, words, { energy, jumpcut: !!o.jumpcut, preview });
     if (resolved === "speaker") for (const w of words) w.spk = speakerAt(plan, (w.s + w.e) / 2);
@@ -411,10 +437,12 @@ export async function renderCandidate(clip, overrides = {}, signal = null, onRun
     await loadFonts();
     const captions = buildCaptionTrack(tl.mapWords(words), { style: o.captionStyle, keywords: clip.keywords });
     const hook = o.showHook ? clip.hookText || clip.title : "";
-    const compositor = createCompositor({ layout: resolved, plan: planToOutput(plan, resolved, tl), captions, hook });
+    const size = video ? { W: VIDEO_W, H: VIDEO_H } : {};
+    const compositor = createCompositor({ layout: resolved, plan: video ? {} : planToOutput(plan, resolved, tl), captions, hook, ...size });
     const result = await renderClip({
       source: { videoTrack: src.videoTrack, audioTrack: src.audioTrack, t0: src.t0 },
-      start, end, timeline: tl, compositor, signal,
+      // 16:9 a 5 Mb/s: un video de 10 min ocupa ~400 MB en memoria hasta descargarlo
+      start, end, timeline: tl, compositor, signal, bitrate: video ? 5e6 : 8e6,
       onProgress: (f, m) => progress(0.15 + f * 0.85, m),
     });
     if (clip.blobUrl) URL.revokeObjectURL(clip.blobUrl);
@@ -456,8 +484,9 @@ function renderGrid() {
         ${clip.thumb ? `<img class="thumb-169" src="${esc(clip.thumb)}" alt="">` : ""}
         <span class="clip-score">★ ${clip.score.toFixed(1)}</span>
         <span class="clip-status-chip ${clip.status}">${chip}</span>
-        ${clip.category ? `<span class="clip-fmt">${esc(clip.category.toUpperCase())}</span>` : ""}
-        <span class="clip-dur">${Math.round(clip.end - clip.start)}s</span>
+        ${clip.format === "video" ? `<span class="clip-fmt video">VIDEO 16:9</span>`
+          : clip.category ? `<span class="clip-fmt">${esc(clip.category.toUpperCase())}</span>` : ""}
+        <span class="clip-dur">${clip.format === "video" ? fmtT(clip.end - clip.start) : `${Math.round(clip.end - clip.start)}s`}</span>
       </div>
       <div class="clip-body">
         <div class="clip-title">${esc(clip.title || clip.transcript.slice(0, 70))}</div>
@@ -590,6 +619,10 @@ function openModal(clip) {
   $("m-jumpcut").checked = o.jumpcut;
   $("m-preview").checked = o.preview;
   $("m-desc").value = publishText(clip);
+  // en los videos 16:9 no hay encuadre vertical, cámara, gancho ni recortes
+  const video = clip.format === "video";
+  $("modal").classList.toggle("is-video", video);
+  for (const id of ["m-layout", "m-showhook", "m-jumpcut", "m-preview", "m-hook", "m-cam-btn"]) $(id).disabled = video;
   $("m-progress").hidden = clip.status !== "rendering";
   refreshModal(clip);
   $("modal").hidden = false;
@@ -615,7 +648,7 @@ function refreshModal(clip) {
   const chips = [];
   if (clip.category) chips.push(`<span class="chip">${esc(clip.category)}</span>`);
   if (clip.layoutUsed) chips.push(`<span class="chip">encuadre: ${esc(LAYOUT_LABEL[clip.layoutUsed] || clip.layoutUsed)}</span>`);
-  if (clip.llmScores) chips.push(`<span class="chip">IA · gancho ${clip.llmScores.hook} · se entiende ${clip.llmScores.standalone} · remate ${clip.llmScores.payoff}</span>`);
+  if (clip.llmScores) chips.push(`<span class="chip">IA${clip.llmScores.model ? ` (${esc(clip.llmScores.model)})` : ""} · gancho ${clip.llmScores.hook} · se entiende ${clip.llmScores.standalone} · remate ${clip.llmScores.payoff}</span>`);
   if (clip.status === "error") chips.push(`<span class="chip">error: ${esc(clip.error)}</span>`);
   $("m-signals").innerHTML = (chips.length ? `<div class="chips">${chips.join("")}</div>` : "") + bars;
   $("m-reason").textContent = clip.reason || "";

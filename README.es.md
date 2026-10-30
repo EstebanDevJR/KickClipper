@@ -1,4 +1,6 @@
-# ⚡ KickClipper
+<img src="webapp/icons/logo.svg" width="72" alt="">
+
+# KickClipper
 
 > 🇬🇧 [English documentation](README.md)
 
@@ -13,10 +15,10 @@ Dos formas de usarlo, las dos sin APIs en la nube ni claves:
 |---|---|---|
 | Dónde corre | en tu navegador (Chrome/Edge) | servidor local (Python) |
 | Instalación | ninguna: abre la web | `uv` + ffmpeg + Ollama |
-| Hosting | estático y gratis (GitHub Pages) | tu máquina |
+| Hosting | estático y gratis (Vercel) | tu máquina |
 | Transcripción | Whisper en el navegador (WebGPU/WASM) | Whisper large-v3-turbo (MLX / faster-whisper) |
-| IA para elegir | opcional: WebLLM o la IA de Chrome | Ollama (`qwen3:8b`) |
-| Formatos | shorts 9:16 | shorts 9:16 + videos 16:9 |
+| IA para elegir | opcional: WebLLM, la IA de Chrome o cualquier modelo de Ollama de tu PC | cualquier modelo que tengas en Ollama (por defecto `qwen3:8b`) |
+| Formatos | shorts 9:16 + videos 16:9 | shorts 9:16 + videos 16:9 |
 
 En ambos casos el vídeo, la transcripción y los clips **nunca salen de tu
 dispositivo**.
@@ -95,7 +97,7 @@ pesado ocurre en el navegador del usuario:
 | Análisis de audio | DSP propio en JS (FFT, envolvente, sonoridad) |
 | Transcripción | [transformers.js](https://github.com/huggingface/transformers.js) + Whisper con marcas por palabra (WebGPU o WASM) |
 | Caras / quién habla | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe) (detector + `jawOpen`) |
-| IA para elegir (opcional) | [WebLLM](https://github.com/mlc-ai/web-llm) (Qwen3) o la Prompt API de Chrome |
+| IA para elegir (opcional) | [WebLLM](https://github.com/mlc-ai/web-llm) (Qwen3), la Prompt API de Chrome o tu [Ollama](https://ollama.com) |
 | Render | Canvas + WebCodecs → MP4 H.264/AAC (o WebM VP9 si el navegador no codifica H.264) |
 
 Ideas para que sea viable en un navegador:
@@ -120,14 +122,22 @@ descarga directa o hace falta el **chat del VOD**, la app se lo pide por
 También puedes arrastrar un archivo de vídeo o pegar una URL directa
 (MP4/M3U8 con CORS).
 
-### Desplegarla gratis en GitHub Pages
+### Desplegarla gratis en Vercel
 
-1. En el repositorio: **Settings → Pages → Source: GitHub Actions**.
-2. Haz push a `main`: el workflow [`pages.yml`](.github/workflows/pages.yml)
-   pasa los tests y publica `webapp/` en `https://<usuario>.github.io/<repo>/`.
+Importa el repo en [Vercel](https://vercel.com/new) tal cual:
+[`vercel.json`](vercel.json) publica solo `webapp/` (sin build ni Python) y
+cada push a `main` la actualiza. Solo se puede alojar la versión web; la de
+escritorio corre siempre en el equipo de cada usuario.
 
-Funciona igual en cualquier hosting estático (Cloudflare Pages, Netlify,
-Vercel…): no necesita cabeceras especiales. Para probarla en local:
+Al ser archivos estáticos sin cabeceras especiales, también sirve cualquier
+otro hosting estático (Cloudflare Pages, Netlify…).
+
+**Usar tus modelos de Ollama en la web publicada:** quien tenga
+[Ollama](https://ollama.com) puede elegir cualquier modelo que tenga
+instalado. Ollama debe permitir el origen de la web, p. ej. abriéndolo con
+`OLLAMA_ORIGINS=https://tu-web.vercel.app`; la página muestra el valor exacto.
+
+Para probarla en local:
 
 ```bash
 python3 -m http.server -d webapp 8000   # y abre http://localhost:8000
@@ -136,7 +146,18 @@ python3 -m http.server -d webapp 8000   # y abre http://localhost:8000
 Requisitos del usuario: Chrome, Edge u Opera recientes en ordenador
 (WebCodecs; con WebGPU la IA va mucho más rápida). La primera vez se descarga
 el modelo de transcripción (~150 MB, o ~1 GB el preciso) y, si se activa, la
-IA (~1 GB); después quedan en la caché del navegador.
+IA (~1 GB); después quedan en la caché del navegador. Se puede **instalar como
+app** (icono de instalar en la barra de direcciones) y abre sin conexión.
+
+**Videos 16:9 en la web:** elige *Formato → 5–10 min (YouTube)*. Se
+transcriben enteros los tramos más activos del VOD y se renderizan a
+1920×1080 sin recortes. El video completo se monta en memoria antes de
+descargarlo: cuenta con 1–2 GB de RAM libre por video.
+
+**Vista previa al compartir el link:** `og:image` es relativa en
+`webapp/index.html`; cuando tengas el dominio, ponla absoluta
+(`https://tu-web.vercel.app/icons/og.png`) para que Discord, X o WhatsApp
+muestren la imagen.
 
 ## 🖥️ Versión de escritorio
 
@@ -152,7 +173,10 @@ URL del VOD ─▶ ① Descarga (yt-dlp)  +  chat del VOD (en paralelo)
 
 - Python ≥ 3.12 y [uv](https://docs.astral.sh/uv/)
 - [Ollama](https://ollama.com) corriendo con algún modelo (`ollama pull qwen3:8b`)
-  — sin Ollama funciona igual, solo con señales automáticas.
+  — sin Ollama funciona igual, solo con señales automáticas. Puedes elegir
+  cualquier modelo instalado en cada trabajo, y la app te recomienda uno
+  según la RAM/VRAM de tu equipo (NVIDIA, AMD o Apple Silicon) y lo instala
+  con un clic.
 - ffmpeg **con libass** (para los subtítulos). Si el tuyo no lo tiene
   (el de Homebrew actual no lo incluye), ejecuta `./scripts/get_ffmpeg.sh`
   (macOS/Linux) o `scripts\get_ffmpeg.ps1` (Windows): descargan un binario

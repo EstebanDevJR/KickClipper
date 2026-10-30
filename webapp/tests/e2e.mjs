@@ -6,6 +6,7 @@
 //   KC_MEDIA       vídeo de prueba (VP9/Opus si el Chromium no trae H.264)
 //   KC_HLS         (opcional) ruta de un master.m3u8 relativa a la carpeta de KC_MEDIA
 //   KC_SKIP_FILE   si está definida, no prueba KC_MEDIA como archivo local
+//   KC_VIDEO       (opcional) vídeo de más de 5 min para probar el formato 16:9
 //   KC_KICK_HLS    (opcional) master.m3u8 (relativo a KC_MEDIA) para simular un VOD
 //                  de Kick abierto con el marcador; KC_KICK_RENDER=1 renderiza el mejor
 //   KC_LIBS        carpeta node_modules con mediabunny, @mediabunny/aac-encoder y
@@ -80,7 +81,8 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://localhost:${server.address().port}`;
 
 const browser = await chromium.launch({ args: ["--enable-unsafe-webgpu", "--autoplay-policy=no-user-gesture-required"] });
-const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+// sin service worker: sus peticiones se saltarían las rutas simuladas de abajo
+const context = await browser.newContext({ viewport: { width: 1360, height: 900 }, serviceWorkers: "block" });
 const page = await context.newPage();
 page.on("console", (m) => { if (["error", "warning"].includes(m.type())) console.log(`[navegador:${m.type()}]`, m.text().slice(0, 300)); });
 page.on("pageerror", (e) => console.log("[navegador:pageerror]", e.message));
@@ -171,6 +173,24 @@ if (MEDIA && !process.env.KC_SKIP_FILE) {
   });
   check(info[0]?.start <= 41 && info[0]?.end >= 41, "archivo: el mejor clip contiene el pico de audio (s 40-43)");
   check(info.find((c) => c.status === "rendered")?.layout === "split", "archivo: facecam detectada → layout split");
+}
+if (process.env.KC_VIDEO) {
+  const info = await runCase("video169", async () => {
+    await page.setInputFiles("#file-input", path.resolve(process.env.KC_VIDEO));
+    await page.selectOption("#dur-input", "300-600");
+  });
+  check(info.length > 0 && info.every((c) => c.end - c.start >= 290 && c.end - c.start <= 600), "video169: candidatos de 5-10 min");
+  check(info.find((c) => c.status === "rendered")?.layout === "fit", "video169: encuadre 16:9 completo");
+  const size = await page.evaluate(async () => {
+    const c = KC.state.clips.find((x) => x.status === "rendered");
+    if (!c) return null;
+    const v = document.createElement("video");
+    v.src = c.blobUrl;
+    await new Promise((r) => { v.onloadedmetadata = r; v.onerror = r; });
+    return [v.videoWidth, v.videoHeight, v.duration];
+  });
+  console.log("   salida:", size);
+  check(size?.[0] === 1920 && size?.[1] === 1080, "video169: salida 1920×1080");
 }
 if (process.env.KC_HLS) {
   served.clear();

@@ -3,6 +3,9 @@
 // - WebLLM (WebGPU): descarga un modelo pequeño una vez (~1 GB) y lo ejecuta en
 //   la GPU del usuario.
 // - IA integrada de Chrome (Prompt API, Gemini Nano) si el navegador la ofrece.
+// - Ollama: cualquier modelo que el usuario tenga instalado en su equipo
+//   (http://localhost:11434). Ollama debe permitir el origen de esta web con
+//   OLLAMA_ORIGINS; las peticiones van de tu navegador a tu propio equipo.
 // Sin LLM, la app funciona igual con señales automáticas.
 
 import { CATEGORIES, LIMITS, numberedLines, signalsText } from "./highlights.js";
@@ -13,6 +16,24 @@ export const WEBLLM_MODELS = {
   "Qwen3-4B-q4f16_1-MLC": "Qwen3 4B (~2,5 GB, mejor criterio, GPU potente)",
   "Qwen2.5-1.5B-Instruct-q4f16_1-MLC": "Qwen2.5 1.5B (~1 GB)",
 };
+
+export const OLLAMA_URL = "http://localhost:11434";
+
+/** Modelos de texto instalados en Ollama, o null si no responde (apagado o sin CORS). */
+export async function ollamaModels(timeoutMs = 2500) {
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    const { models = [] } = await res.json();
+    return models
+      .filter((m) => {
+        const d = m.details || {};
+        const fams = [d.family || "", ...(d.families || [])];
+        return m.name && !/embed/i.test(m.name) && !fams.some((f) => /bert/i.test(f));
+      })
+      .map((m) => m.name);
+  } catch { return null; }
+}
 
 const GUIDE = `Sabes cómo funcionan los clips de streamers en TikTok, YouTube Shorts y Reels:
 - Los primeros 3 segundos deciden si la gente se queda: el clip debe abrir con la frase o reacción más fuerte, o con una tensión clara. Nada de saludos ni relleno al inicio.
@@ -33,7 +54,27 @@ const SCHEMA = {
   required: ["score", "hook", "standalone", "payoff", "title", "hook_text", "description", "hashtags", "reason"],
 };
 
+/** Videos 16:9 de 5-10 min (mismo prompt que la versión de escritorio). */
+export function buildVideoPrompt(w, channel) {
+  // ~5000 caracteres caben en el contexto de los modelos pequeños del navegador
+  const text = w.segments.map((s) => s.text).join(" ").slice(0, 5000);
+  return `Eres editor experto de videos de YouTube (5-10 minutos) hechos con streams.
+Evalúa si este fragmento largo sostiene la atención varios minutos: historias o situaciones con desarrollo y remate, drama continuado, partidas épicas completas, debates con sustancia, humor sostenido. Penaliza relleno, silencios, temas inconexos y fragmentos sin principio ni final claros.
+
+Canal: ${channel || "?"}
+Señales automáticas: ${signalsText(w)}
+
+Transcripción:
+"""${text}"""
+
+Título, descripción y hashtags en el MISMO idioma de la transcripción.
+
+Responde SOLO con JSON:
+{"score": <0-10>, "hook": <0-10 fuerza del primer minuto>, "standalone": <0-10>, "payoff": <0-10>, "title": "<gancho, máx 60 caracteres>", "hook_text": "<3 a 6 palabras>", "description": "<2-3 frases que vendan el video sin destripar el final, sin hashtags>", "hashtags": ["<3-5 sin #>"], "keywords": ["<hasta 5 palabras>"], "category": "<${CATEGORIES.join("|")}>", "reason": "<1 frase>"}`;
+}
+
 export function buildPrompt(w, ctx, channel, limits = LIMITS) {
+  if (w.format === "video") return buildVideoPrompt(w, channel);
   const { lines, index } = numberedLines(w, ctx);
   w.lineIndex = index;
   return `Eres editor experto de clips virales de streamers.
@@ -62,7 +103,8 @@ function parseJson(text) {
 
 /** ¿Qué motores hay disponibles en este navegador? */
 export async function llmOptions() {
-  const out = { webgpu: false, chrome: false };
+  const out = { webgpu: false, chrome: false, ollama: null };
+  const ollama = ollamaModels();
   try { out.webgpu = !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch { /* sin WebGPU */ }
   try {
     if (globalThis.LanguageModel?.availability) {
@@ -70,11 +112,58 @@ export async function llmOptions() {
       out.chrome = a && a !== "unavailable";
     }
   } catch { /* sin Prompt API */ }
+  out.ollama = await ollama;
   return out;
 }
 
-/** Crea el evaluador. kind: "webllm" | "chrome". */
+/** Crea el evaluador. kind: "webllm" | "chrome" | "ollama". */
 export async function createLLM(kind, { model = "Qwen3-1.7B-q4f16_1-MLC", onProgress, limits = LIMITS } = {}) {
+  if (kind === "ollama") {
+    let think = true;  // manda think=false; se quita si el modelo no lo admite
+    const generate = (prompt) => fetch(`${OLLAMA_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model, prompt, stream: false, format: SCHEMA,
+        options: { temperature: 0.3, num_predict: 450, num_ctx: 8192 },
+        keep_alive: "15m",
+        ...(think ? { think: false } : {}),
+      }),
+    });
+    // Un prompt vacío solo carga el modelo en memoria: con modelos grandes
+    // tarda, y así se ve "cargando" en vez de una IA que parece colgada.
+    onProgress?.(0, `Cargando ${model} en Ollama (la primera vez puede tardar)`);
+    const warm = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // mismo num_ctx que las consultas: si cambia, Ollama recarga el modelo
+      body: JSON.stringify({ model, keep_alive: "15m", options: { num_ctx: 8192 } }),
+    });
+    if (!warm.ok) throw new Error(`Ollama no pudo cargar ${model} (${warm.status})`);
+    onProgress?.(1, `${model} listo`);
+    let fails = 0;  // tras 2 fallos seguidos deja de intentarlo (Ollama cerrado…)
+    return {
+      name: `${model} (Ollama)`,
+      async score(w, ctx, channel) {
+        if (fails >= 2) return null;
+        try {
+          const prompt = buildPrompt(w, ctx, channel, limits);
+          let res = await generate(prompt);
+          if (res.status === 400 && think && /think/i.test(await res.clone().text())) {
+            think = false;
+            res = await generate(prompt);
+          }
+          if (!res.ok) throw new Error(`Ollama respondió ${res.status}`);
+          const { response } = await res.json();
+          fails = 0;
+          return parseJson(String(response || "").replace(/<think>[\s\S]*?<\/think>/g, ""));
+        } catch (err) {
+          fails++;
+          throw err;
+        }
+      },
+    };
+  }
   if (kind === "chrome") {
     const base = await globalThis.LanguageModel.create({
       initialPrompts: [{ role: "system", content: "Respondes solo con JSON válido." }],
