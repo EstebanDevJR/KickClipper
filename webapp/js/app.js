@@ -55,6 +55,7 @@ async function init() {
   if (globalThis.__KC_TEST__?.transcriber) setTranscriber(globalThis.__KC_TEST__.transcriber);
   setupTabs();
   setupDropzone();
+  setupUrlInput();
   setupSettings();
   setupModal();
   // instalable como app y usable sin conexión (solo en https o localhost)
@@ -137,6 +138,14 @@ function selectTab(tab) {
   document.querySelectorAll(".tab-body").forEach((b) => { b.hidden = b.dataset.body !== tab; });
 }
 
+function setupUrlInput() {
+  // al pegar la página de un VOD de Kick se explica el marcador sin esperar al error
+  $("url-input").addEventListener("input", (e) => {
+    const url = e.target.value.trim();
+    if (isKickPage(url)) guideToBookmarklet(url);
+  });
+}
+
 function setupDropzone() {
   const dz = $("dropzone");
   $("file-input").addEventListener("change", (e) => setFile(e.target.files[0]));
@@ -186,6 +195,26 @@ function setStage(stage, frac, msg) {
   if (msg !== undefined) { $("run-msg").textContent = msg; $("run-msg").classList.remove("error"); }
 }
 
+/** ¿Es la página de Kick (no un archivo de vídeo)? kick.com no permite CORS. */
+const isKickPage = (url) => { try { return /(^|\.)kick\.com$/i.test(new URL(url).hostname); } catch { return false; } };
+
+/** Lleva a la pestaña del marcador cuando se pega la URL de una página de Kick. */
+function guideToBookmarklet(url) {
+  selectTab("kick");
+  $("kick-pasted").hidden = false;
+  $("kick-pasted-link").href = url;
+  $("url-input").value = "";
+}
+
+/** Mensaje entendible para los fallos típicos al leer una URL. */
+function friendlyError(err) {
+  const msg = String(err?.message || err);
+  if (state.tab === "url" && /failed to fetch|networkerror|cors/i.test(msg)) {
+    return "No se pudo leer la URL: el servidor del vídeo no permite que otras webs lo descarguen (CORS) o el enlace no es un archivo de vídeo. Descárgalo y usa la pestaña «Archivo».";
+  }
+  return msg;
+}
+
 function sourceInput() {
   if (state.tab === "file") {
     if (!state.file) throw new Error("Elige un archivo de vídeo");
@@ -197,6 +226,10 @@ function sourceInput() {
   }
   const url = $("url-input").value.trim();
   if (!/^https?:\/\//.test(url)) throw new Error("Pega una URL http(s) válida");
+  if (isKickPage(url)) {
+    guideToBookmarklet(url);
+    throw new Error("Para VODs de Kick usa el marcador ⚡ KickClipper: los pasos están arriba.");
+  }
   return { url, name: url.split("/").pop() };
 }
 
@@ -295,7 +328,7 @@ export async function run() {
     setStage("render", 1, `Listo: ${state.clips.length} clips`);
     document.querySelectorAll("#run-pipe .pipe-step").forEach((el) => { el.classList.add("donestep"); el.classList.remove("active"); });
   } catch (err) {
-    const msg = err?.name === "AbortError" ? "Cancelado" : `Error: ${err?.message || err}`;
+    const msg = err?.name === "AbortError" ? "Cancelado" : `Error: ${friendlyError(err)}`;
     $("run-msg").textContent = msg;
     $("run-msg").classList.add("error");
     console.error(err);
